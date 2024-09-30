@@ -238,14 +238,28 @@
               window.open('./visualize.html', '_self');
           }
             
-          document.getElementById('label-image').addEventListener('click', function(event) {
-              let img = event.target;
-              
-              let rect = img.getBoundingClientRect();
-              let x = event.clientX - rect.left;
-              let y = event.clientY - rect.top;
+          function handle_mousemove() {
+            let x = event.offsetX;
+            let y = event.offsetY;
 
-              eel.handle_click_on_label_image(x, y);
+            eel.handle_click_on_label_image(x, y)
+          }
+
+          function handle_mouseup() {
+            document.removeEventListener('mousemove', handle_mousemove);
+            document.removeEventListener('mouseup', handle_mouseup);
+          }
+
+          document.getElementById('label-image').addEventListener('mousedown', function(event) {
+            let x = event.offsetX;
+            let y = event.offsetY;
+
+            if (y > 500) {
+              eel.handle_click_on_label_image(x, y)
+
+              document.addEventListener('mousemove', handle_mousemove);
+              document.addEventListener('mouseup', handle_mouseup);
+            }
           });
 
           function load_initial() {

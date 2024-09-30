@@ -1975,12 +1975,10 @@ def handle_click_on_label_image(x, y):
     global label_capture
     global label_index
 
-    # If they clicked in the bar, which begins at row 500 in the image (see render_image)
-    if y > 500:
-        amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-        label_index = int(x * amount_of_frames / 500)
+    amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    label_index = int(x * amount_of_frames / 500)
 
-        render_image()
+    render_image()
 
 @eel.expose
 def nextVideo(shift):
