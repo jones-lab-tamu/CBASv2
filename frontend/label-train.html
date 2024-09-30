@@ -175,7 +175,7 @@
                         <div class="row" style="padding-bottom: 10px;">
                             <div class="col">
                                 <div id="img-section">
-                                    <img id="label-image" src="" alt="" style="border:2px solid black;">
+                                    <img id="label-image" src="" alt="" style="border:2px solid black;" draggable="false">
                                 </div>
                             </div>
                             <div class="col">
@@ -237,9 +237,17 @@
               routing = true 
               window.open('./visualize.html', '_self');
           }
-
-		  
             
+          document.getElementById('label-image').addEventListener('click', function(event) {
+              let img = event.target;
+              
+              let rect = img.getBoundingClientRect();
+              let x = event.clientX - rect.left;
+              let y = event.clientY - rect.top;
+
+              eel.handle_click_on_label_image(x, y);
+          });
+
           function load_initial() {
               eel.datasets(read('data_sets'))().then( function(data) {
 
