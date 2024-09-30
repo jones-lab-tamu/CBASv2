@@ -1817,6 +1817,37 @@ def get_record_tree():
     return rt
 
 @eel.expose
+def delete_instance():
+    global instance_stack
+    global label_dict
+    global label_index
+
+    beh = None
+    ind = None
+
+
+    for b in label_dict['behaviors']:
+        if beh != None or ind != None:
+            break
+
+        for i,inst in enumerate(label_dict['labels'][b]):
+            if inst['start'] <= label_index <= inst['end']:
+                beh = b
+                ind = i
+                break
+
+    if beh==None or ind==None:
+        return
+    else:
+        del label_dict['labels'][beh][ind]
+
+    # save the label dictionary
+    with open(label_dict_path, 'w+') as file:
+        yaml.dump(label_dict, file, allow_unicode=True)
+
+    update_counts()
+
+@eel.expose
 def pop_instance():
 
     global instance_stack
@@ -2110,8 +2141,9 @@ def kill_streams():
     thread.raise_exception()
     thread.join()
 
-    monitor_thread.raise_exception()
-    monitor_thread.join()
+    if monitor_thread:
+        monitor_thread.raise_exception()
+        monitor_thread.join()
 
     if tthread:
         tthread.raise_exception()
