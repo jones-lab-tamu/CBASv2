@@ -33,6 +33,8 @@ from decord import cpu, gpu
 
 from cmap import Colormap
 
+import queue
+
 import numpy as np
 import pandas as pd
 
@@ -42,7 +44,8 @@ import threading
 
 from classifier_head import classifier
 
-
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 def remove_leading_zeros(num):
     for i in range(0,len(num)):
@@ -618,6 +621,8 @@ label_index = -1
 label = -1
 start = -1
 
+task_queue = queue.Queue()
+
 instance_stack = None
 
 gpu_lock = threading.Lock()
@@ -634,11 +639,13 @@ class inference_thread(threading.Thread):
     def run(self):
         global stop_threads
         global progresses
+        global task_queue
         global gpu_lock
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.enc = encoder(self.device).to(self.device)
 
         while True:
-
             progresses = []
             if recordings!='':
                 videos = []
@@ -672,9 +679,6 @@ class inference_thread(threading.Thread):
                 for iv, v in enumerate(videos):
                     with gpu_lock:
 
-                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                        enc = encoder(device).to(device)
-
                         try:
                             cap = cv2.VideoCapture(v)
 
@@ -684,31 +688,44 @@ class inference_thread(threading.Thread):
                                 time.sleep(5)
                                 continue
 
+                            file_path = os.path.splitext(v)[0]+'_cls.h5'
+                            print(f"encoding video '{v}' -> '{file_path}'")
+
                             vr = VideoReader(v, ctx=cpu(0))
 
                             frames = vr.get_batch(range(0, len(vr), 1)).asnumpy()
 
                             frames = torch.from_numpy(frames[:, :, :, 1]/255).half()
 
-                            batch_size = 1024
+                            batch_size = 256
 
-                            clss = []
+                            with torch.no_grad():
+                                clss = []
 
-                            for i in range(0, len(frames), batch_size):
-                                batch = frames[i:i+batch_size]
+                                for i in range(0, len(frames), batch_size):
+                                    batch = frames[i:i+batch_size]
 
-                                progresses[iv] = (i)/len(frames)*m
+                                    progresses[iv] = (i)/len(frames)*m
 
-                                with torch.no_grad() and autocast():
-                                    out = enc(batch.unsqueeze(1).to(device))
+                                    with torch.no_grad() and autocast():
+                                        out = self.enc(batch.unsqueeze(1).to(self.device))
 
-                                out = out.squeeze(1).to('cpu')
-                                clss.extend(out)
+                                    batch = batch.to('cpu')
 
-                            file_path = os.path.splitext(v)[0]+'_cls.h5'
+                                    out = out.squeeze(1).to('cpu')
+                                    clss.extend(out)
+
 
                             with h5py.File(file_path, 'w') as file:
                                 file.create_dataset('cls', data=torch.stack(clss).numpy())
+                            
+                            clss = None
+                            batch = None
+                            frames = None
+                            vr = None
+                            out = None
+
+                            torch.cuda.empty_cache()
 
                             progresses[iv] = m
 
@@ -919,8 +936,6 @@ class classification_thread(threading.Thread):
 
         while True:
 
-
-
             time.sleep(1)
 
             with gpu_lock:
@@ -978,8 +993,12 @@ class classification_thread(threading.Thread):
 
 
                 for clsfile in valid_videos:
+                    outputfile = clsfile.replace('_cls.h5', '_' + dataset_name + '_outputs.csv')
 
-                    outputfile = clsfile.replace('_cls.h5', '_'+dataset_name+'_outputs.csv')
+                    if os.path.isfile(outputfile):
+                        continue
+
+                    print(f"classifying '{clsfile}' -> '{outputfile}'")
 
                     with h5py.File(clsfile, 'r') as file:
                         cls = np.array(file['cls'][:])
@@ -1005,9 +1024,7 @@ class classification_thread(threading.Thread):
 
                             with torch.no_grad() and autocast():
 
-                                lstm_logits, linear_logits = model.forward_nodrop(batch.to(device))
-
-                                logits = lstm_logits + linear_logits
+                                logits = model.forward_nodrop(batch.to(device))
 
                                 probs = torch.softmax(logits, dim=1)
 
@@ -1031,6 +1048,8 @@ class classification_thread(threading.Thread):
                     dataframe = pd.DataFrame(total_predictions, columns=behaviors)
 
                     dataframe.to_csv(outputfile)
+
+                    torch.cuda.empty_cache()
 
 
 
@@ -1453,6 +1472,9 @@ def ping_cameras(camera_directory):
 
     for camera in os.listdir(camera_directory):
         if os.path.isdir(os.path.join(camera_directory, camera)):
+            if camera in active_streams.keys():
+                continue
+
             config = os.path.join(camera_directory, camera, 'config.yaml')
 
             with open(config, 'r') as file:
@@ -1469,7 +1491,7 @@ def ping_cameras(camera_directory):
             if os.path.exists(frame_location):
                 os.remove(frame_location)
 
-            command = f"ffmpeg -loglevel panic -rtsp_transport tcp -i {rtsp_url} -vf \"select=eq(n\,34)\" -vframes 1 -y {frame_location}"
+            command = f"ffmpeg -loglevel panic -rtsp_transport tcp -i {rtsp_url} -vf \"select=eq(n\,34)\" -vframes 1 -y \"{frame_location}\""
 
             subprocess.Popen(command, shell=True)
 
