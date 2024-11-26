@@ -78,7 +78,7 @@ class classifier(nn.Module):
 
         lstm_logits, raw = self.forward_lstm(x)
 
-        return lstm_logits, linear_logits
+        return lstm_logits + linear_logits
     
     
     

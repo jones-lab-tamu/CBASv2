@@ -44,9 +44,6 @@ import threading
 
 from classifier_head import classifier
 
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
 def remove_leading_zeros(num):
     for i in range(0,len(num)):
         if num[i]!='0':
