@@ -57,4 +57,4 @@ whichcraft==0.6.1
 zipp==3.15.0
 zope.event==5.0
 zope.interface==6.4.post2
-ffmpeg-python
+ffmpeg-python==0.2.0
