@@ -858,9 +858,7 @@ class training_thread(threading.Thread):
 
                         with torch.no_grad():
 
-                            lstm_logits, linear_logits = model.forward_nodrop(d)
-
-                            logits = lstm_logits + linear_logits
+                            logits = model.forward_nodrop(d)
 
                         actuals.extend(l.cpu().numpy())
                         predictions.extend(logits.argmax(1).cpu().numpy())
@@ -1717,6 +1715,39 @@ def get_record_tree():
                 rt[sd] = sub_sub_dirs
 
     return rt
+
+@eel.expose
+def delete_instance():
+    global instance_stack
+    global label_dict
+    global label_index
+
+    beh = None
+    ind = None
+
+
+    for b in label_dict['behaviors']:
+        if beh != None or ind != None:
+            break
+
+        for i,inst in enumerate(label_dict['labels'][b]):
+            if inst['start'] <= label_index <= inst['end']:
+                beh = b
+                ind = i
+                break
+
+    if beh==None or ind==None:
+        return
+    else:
+        del label_dict['labels'][beh][ind]
+
+    # save the label dictionary
+    with open(label_dict_path, 'w+') as file:
+        yaml.dump(label_dict, file, allow_unicode=True)
+
+    update_counts()
+    nextFrame(0)
+
 
 @eel.expose
 def pop_instance():
