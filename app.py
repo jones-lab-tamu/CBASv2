@@ -261,16 +261,19 @@ class Actogram:
 
         behavior = self.behavior
 
-        valid_files = [(os.path.join(self.directory, file), remove_leading_zeros(file.split('_')[1]))  for file in os.listdir(self.directory) if file.endswith('.csv') and '_'+self.model+'_' in file]
+        valid_files = [file for file in os.listdir(self.directory) if file.endswith('.csv') and '_' + self.model + '_' in file]
 
-        valid_files.sort(key = lambda vf: vf[1])
+        # Split the files into path and camera number for use later
+        split_files = [(os.path.join(self.directory, file), remove_leading_zeros(file.split('_')[-3])) for file in valid_files]
 
-        last_num = valid_files[-1][1]
+        split_files.sort(key = lambda vf: vf[1])
 
-        if len(valid_files)!=last_num+1:
+        last_num = split_files[-1][1]
+
+        if len(split_files)!=last_num+1:
 
             prev_num = -1
-            for vf, num in valid_files:
+            for vf, num in split_files:
                 if num!=prev_num+1:
                     raise Exception(f'Missing number - {prev_num+1}')
 
@@ -280,7 +283,7 @@ class Actogram:
 
         continuous = False
 
-        for vf, num in valid_files:
+        for vf, num in split_files:
 
             dataframe = pd.read_csv(vf)
 
