@@ -1725,7 +1725,6 @@ def delete_instance():
     beh = None
     ind = None
 
-
     for b in label_dict['behaviors']:
         if beh != None or ind != None:
             break
@@ -1746,14 +1745,17 @@ def delete_instance():
         yaml.dump(label_dict, file, allow_unicode=True)
 
     update_counts()
-    nextFrame(0)
 
+    render_image()
 
 @eel.expose
 def pop_instance():
 
     global instance_stack
     global label_dict
+
+    if len(instance_stack) == 0:
+        return
 
     last_inst = instance_stack[-1]
 
@@ -1776,8 +1778,7 @@ def pop_instance():
 
     update_counts()
 
-    nextFrame(0)
-
+    render_image()
 
 @eel.expose
 def label_frame(value):
@@ -1803,6 +1804,53 @@ def label_frame(value):
         label = -1
         raise Exception('Label does not match that that was started.')
 
+def render_image():
+    global label_capture
+    global label_videos
+    global label_vid_index
+    global label_index
+    global label
+    global start
+
+    amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+
+    label_capture.set(cv2.CAP_PROP_POS_FRAMES, label_index)
+
+    ret, frame = label_capture.read()
+
+    if ret:
+        frame = cv2.resize(frame, (500, 500))
+
+        temp = np.zeros((frame.shape[0]+50, frame.shape[1], frame.shape[2]))
+
+        temp[:-50,:,:] = frame
+
+        temp[-50,:,:] = 0
+
+        temp[-49:,:,:] = 100
+
+        temp = fill_colors(temp)
+
+        marker_pos = int(frame.shape[1] * label_index/amount_of_frames)
+
+        if marker_pos!=0 and marker_pos!=frame.shape[1]-1:
+            temp[-45:-5, marker_pos-1:marker_pos+2, :] = 255
+        else:
+            if marker_pos==0:
+                temp[-45:-5, marker_pos:marker_pos+2, :] = 255
+            else:
+                temp[-45:-5, marker_pos-1:marker_pos+1, :] = 255
+
+
+        ret, frame = cv2.imencode('.jpg', temp)
+
+        frame = frame.tobytes()
+
+        blob = base64.b64encode(frame)
+        blob = blob.decode("utf-8")
+
+        eel.updateLabelImageSrc(blob)()
+
 @eel.expose
 def nextFrame(shift):
     global label_capture
@@ -1816,51 +1864,22 @@ def nextFrame(shift):
         shift-=1
 
     if label_capture.isOpened():
-
         amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
 
         label_index+=shift
         label_index%=amount_of_frames
 
+        render_image()
 
+@eel.expose
+def handle_click_on_label_image(x, y):
+    global label_capture
+    global label_index
 
-        label_capture.set(cv2.CAP_PROP_POS_FRAMES, label_index)
+    amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    label_index = int(x * amount_of_frames / 500)
 
-        ret, frame = label_capture.read()
-
-        if ret:
-
-            frame = cv2.resize(frame, (500, 500))
-
-            temp = np.zeros((frame.shape[0]+50, frame.shape[1], frame.shape[2]))
-
-            temp[:-50,:,:] = frame
-
-            temp[-50,:,:] = 0
-
-            temp[-49:,:,:] = 100
-
-            temp = fill_colors(temp)
-
-            marker_pos = int(frame.shape[1] * label_index/amount_of_frames)
-
-            if marker_pos!=0 and marker_pos!=frame.shape[1]-1:
-                temp[-45:-5, marker_pos-1:marker_pos+2, :] = 255
-            else:
-                if marker_pos==0:
-                    temp[-45:-5, marker_pos:marker_pos+2, :] = 255
-                else:
-                    temp[-45:-5, marker_pos-1:marker_pos+1, :] = 255
-
-
-            ret, frame = cv2.imencode('.jpg', temp)
-
-            frame = frame.tobytes()
-
-            blob = base64.b64encode(frame)
-            blob = blob.decode("utf-8")
-
-            eel.updateLabelImageSrc(blob)()
+    render_image()
 
 @eel.expose
 def nextVideo(shift):

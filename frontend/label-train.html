@@ -175,7 +175,7 @@
                         <div class="row" style="padding-bottom: 10px;">
                             <div class="col">
                                 <div id="img-section">
-                                    <img id="label-image" src="" alt="" style="border:2px solid black;">
+                                    <img id="label-image" src="" alt="" style="border:2px solid black;" draggable="false">
                                 </div>
                             </div>
                             <div class="col">
@@ -238,8 +238,29 @@
               window.open('./visualize.html', '_self');
           }
 
-		  
-            
+          function handle_mousemove() {
+            let x = event.offsetX;
+            let y = event.offsetY;
+            eel.handle_click_on_label_image(x, y)
+          }
+
+          function handle_mouseup() {
+            document.removeEventListener('mousemove', handle_mousemove);
+            document.removeEventListener('mouseup', handle_mouseup);
+          }
+
+          document.getElementById('label-image').addEventListener('mousedown', function(event) {
+            let x = event.offsetX;
+            let y = event.offsetY;
+
+            if (y > 500) {
+              eel.handle_click_on_label_image(x, y)
+
+              document.addEventListener('mousemove', handle_mousemove);
+              document.addEventListener('mouseup', handle_mouseup);
+            }
+          });
+
           function load_initial() {
               eel.datasets(read('data_sets'))().then( function(data) {
 
