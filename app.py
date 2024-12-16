@@ -10,6 +10,7 @@ from sys import exit
 import subprocess
 import shutil
 import cairo
+import ffmpeg
 
 import cv2
 
@@ -1069,9 +1070,79 @@ class classification_thread(threading.Thread):
             ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
             print('Exception raise failure')
 
+
+class live_monitor_thread(threading.Thread):
+    def __init__(self, image_width, image_height, fps):
+        threading.Thread.__init__(self)
+
+        self.fps = fps
+        self.image_width = image_width
+        self.image_height = image_height
+        self.frame_size = self.image_width * self.image_height * 3
+
+    def run(self):
+        global live_monitor_cameras
+
+        for camera in live_monitor_cameras:
+            url = live_monitor_cameras[camera]['url']
+
+            proc = (
+                ffmpeg
+                .input(url, rtsp_transport='tcp')
+                .filter('fps', fps=self.fps)
+                .filter('scale', self.image_width, self.image_height)
+                .output('pipe:', format='rawvideo', pix_fmt='bgr24')
+                .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True, overwrite_output=True)
+            )
+
+            live_monitor_cameras[camera]['proc'] = proc
+            
+        while True:
+            for camera in live_monitor_cameras:
+                if not 'enabled' in live_monitor_cameras[camera] or not live_monitor_cameras[camera]['enabled']:
+                    continue
+
+                proc = live_monitor_cameras[camera]['proc']
+
+                raw_frame = proc.stdout.read(self.frame_size)
+                if len(raw_frame) == self.frame_size:
+                    latest_frame = np.frombuffer(raw_frame, np.uint8).reshape((self.image_height, self.image_width, 3))
+                else:
+                    latest_frame = None
+
+                live_monitor_cameras[camera]['latest_frame'] = latest_frame
+
+    def get_id(self):
+        # returns id of the respective thread
+        if hasattr(self, '_thread_id'):
+            return self._thread_id
+        for id, thread in threading._active.items():
+            if thread is self:
+                return id
+
+    def raise_exception(self):
+        thread_id = self.get_id()
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id,
+              ctypes.py_object(SystemExit))
+        if res > 1:
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+            print('Exception raise failure')
+
 thread = inference_thread('inference')
 
 tthread = None
+
+# Live video monitor config stuff.  It is pretty arbitrary right now.
+live_image_width = 320
+live_image_height = 240
+live_fps = 20
+
+# Camera information needed for live monitoring
+live_monitor_cameras = {}
+
+# The thread that queries ffmpeg for the latest images.
+monitor_thread = None
+
 
 def tab20_map(val):
 
@@ -1462,6 +1533,52 @@ def start_classification(datasets, dataset, whitelist):
 
             classification_threads.append(cthread)
 
+@eel.expose
+def setup_live_cameras(camera_directory):
+    global live_monitor_cameras
+    global monitor_thread
+
+    for camera in os.listdir(camera_directory):
+        if os.path.isdir(os.path.join(camera_directory, camera)):
+            if camera not in live_monitor_cameras:
+                live_monitor_cameras[camera] = {}
+
+    for camera in os.listdir(camera_directory):
+        if os.path.isdir(os.path.join(camera_directory, camera)):
+
+            config = os.path.join(camera_directory, camera, 'config.yaml')
+
+            with open(config, 'r') as file:
+                cconfig = yaml.safe_load(file)
+
+            url = cconfig['rtsp_url']
+
+            live_monitor_cameras[camera]['url'] = url
+            live_monitor_cameras[camera]['latest_frame'] = None
+            live_monitor_cameras[camera]['enabled'] = cconfig['live_monitor']
+
+    monitor_thread = live_monitor_thread(live_image_width, live_image_height, live_fps)
+    monitor_thread.start()
+
+@eel.expose
+def update_live_cameras():
+    global live_monitor_cameras
+
+    for camera in live_monitor_cameras:
+        cam = live_monitor_cameras[camera]
+
+        if cam['latest_frame'] is None or not cam['enabled']:
+            continue
+
+        latest_frame = cam['latest_frame']
+        _, frame = cv2.imencode('.jpg', latest_frame)
+
+        frame = frame.tobytes()
+
+        blob = base64.b64encode(frame)
+        blob = blob.decode("utf-8")
+
+        eel.updateImageSrc(camera, blob)()
 
 @eel.expose
 def ping_cameras(camera_directory):
@@ -1501,7 +1618,6 @@ def ping_cameras(camera_directory):
 
 @eel.expose
 def update_camera_frames(camera_directory):
-
     for camera in os.listdir(camera_directory):
         if os.path.isdir(os.path.join(camera_directory, camera)):
 
@@ -1531,7 +1647,7 @@ def camera_names(camera_directory):
     return names
 
 @eel.expose
-def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1):
+def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1, live_monitor=True):
 
     # set up a folder for the camera
     camera = os.path.join(camera_directory, name)
@@ -1548,7 +1664,8 @@ def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
         'crop_left_x':crop_left_x,
         'crop_top_y':crop_top_y,
         'crop_width':crop_width,
-        'crop_height':crop_height
+        'crop_height':crop_height,
+        'live_monitor':live_monitor,
     }
 
     # save the camera config
@@ -1558,7 +1675,7 @@ def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
     return True, name, camera_config
 
 @eel.expose
-def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1):
+def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1, live_monitor=True):
 
     # set up a folder for the camera
     camera = os.path.join(camera_directory, name)
@@ -1584,6 +1701,9 @@ def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
             cconfig['crop_top_y'] = crop_top_y
             cconfig['crop_width'] = crop_width
             cconfig['crop_height'] = crop_height
+            cconfig['live_monitor'] = live_monitor
+
+            live_monitor_cameras[name]['enabled'] = live_monitor
 
             # save the camera config
             with open(camera_config, 'w+') as file:
@@ -1591,11 +1711,11 @@ def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
         else:
             # remove the camera directory and start fresh
             shutil.rmtree(camera)
-            create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height)
+            create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height, live_monitor)
 
     else:
         # must be a new camera
-        create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height)
+        create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height, live_monitor)
 
 @eel.expose
 def test_camera(camera_directory, name, rtsp_url):
@@ -2061,6 +2181,9 @@ def kill_streams():
     stop_threads = True
     thread.raise_exception()
     thread.join()
+
+    monitor_thread.raise_exception()
+    monitor_thread.join()
 
     if tthread:
         tthread.raise_exception()

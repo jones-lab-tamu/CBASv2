@@ -130,6 +130,10 @@
                                 <p>Crop Height: </p>
                                 <input type="number" class="form-control" id="cs-crop-height" aria-describedby="directory" placeholder="1" step=".01" min="0" max="1">
                             </div>
+                            <div class="col">
+                                <p>Live Monitor: </p>
+                                <input type="checkbox" id="cs-live-monitor" aria-describedby="directory">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -314,11 +318,14 @@
                     console.log('pinging cameras...')
                 })
 
+                eel.setup_live_cameras(read('cameras'))().then( function(data) {
+                    console.log('setting up live camera streams...')
+                })
+
                 let cover = document.getElementById('cover-spin')
                 cover.style.visibility = 'visible'
 
                 setTimeout(function (){
-                    eel.update_camera_frames(read('cameras'))()
                     cover.style.visibility = 'hidden'
                 }, 5000);
 
@@ -337,10 +344,8 @@
                 cover.style.visibility = 'visible'
 
                 setTimeout(function (){
-                    eel.update_camera_frames(read('cameras'))()
                     cover.style.visibility = 'hidden'
                 }, 5000);
-
             }
 
             function drawImageScaled(img, ctx, sx, sy, sw, sh, resolution) {
@@ -369,6 +374,11 @@
                         cy = res['crop_top_y']
                         cw = res['crop_width']
                         ch = res['crop_height']
+                        if (!('live_monitor' in res)) {
+                            live_monitor = true // Default setting for old projects without the setting
+                        } else {
+                            live_monitor = res['live_monitor']
+                        }
 
                         document.getElementById('cs-name').value = name
                         document.getElementById('cs-url').value = url
@@ -378,6 +388,7 @@
                         document.getElementById('cs-cropy').value = cy
                         document.getElementById('cs-crop-width').value = cw
                         document.getElementById('cs-crop-height').value = ch
+                        document.getElementById('cs-live-monitor').checked = live_monitor
 
                         document.getElementById('cs-resolution').onchange = drawBounds
 
@@ -385,7 +396,6 @@
                         document.getElementById('cs-cropy').onchange = drawBounds
                         document.getElementById('cs-crop-width').onchange = drawBounds
                         document.getElementById('cs-crop-height').onchange = drawBounds
-
 
                         var image = new Image();
                         image.src = document.getElementById('camera-'+camera_name).src
@@ -433,8 +443,9 @@
                 cy = document.getElementById('cs-cropy').value
                 cw = document.getElementById('cs-crop-width').value
                 ch = document.getElementById('cs-crop-height').value
+                live_monitor = document.getElementById('cs-live-monitor').checked
 
-                eel.update_camera(read('cameras'), name, url, framerate, resolution, cx, cy, cw, ch)
+                eel.update_camera(read('cameras'), name, url, framerate, resolution, cx, cy, cw, ch, live_monitor)
 
                 load_cameras()
             }
@@ -581,8 +592,8 @@
             }
 
             setInterval(function (){
-                eel.update_camera_frames(read('cameras'))
-            }, 1000)
+                eel.update_live_cameras();
+            }, 1000 / 20)
 
             window.setInterval(function (){
                 eel.get_progress_update()
