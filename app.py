@@ -1519,6 +1519,40 @@ def update_camera_frames(camera_directory):
                 eel.updateImageSrc(camera, blob)()
 
 @eel.expose
+def open_camera_live_view(camera_directory, camera):
+    settings = get_cam_settings(camera_directory, camera)
+    vlc_path = r"C:\Program Files\VideoLAN\VLC\vlc.exe"  # Full path to VLC executable
+    rtsp_url = settings['rtsp_url']
+
+    subprocess.Popen(
+        [vlc_path, rtsp_url],
+        stdout=subprocess.DEVNULL, 
+        stderr=subprocess.DEVNULL
+    )
+
+@eel.expose
+def camera_names_with_cropped_info(camera_directory):
+
+    names = []
+    is_cropped = []
+
+    for camera in os.listdir(camera_directory):
+        if os.path.isdir(os.path.join(camera_directory, camera)):
+            settings = get_cam_settings(camera_directory, camera)
+
+            cx = float(settings['crop_left_x'])
+            cy = float(settings['crop_top_y'])
+            cw = float(settings['crop_width'])
+            ch = float(settings['crop_height'])
+
+            cropped = cx != 0 or cy != 0 or cw != 1 or ch != 1
+
+            names.append(camera)
+            is_cropped.append(cropped)
+
+    return names, is_cropped
+
+@eel.expose
 def camera_names(camera_directory):
 
     names = []

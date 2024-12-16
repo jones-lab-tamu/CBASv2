@@ -109,11 +109,11 @@
                                 <input type="number" class="form-control" id="cs-framerate" aria-describedby="directory" placeholder="10">
                             </div>
                             <div class="col">
-                                <p>Crop X: </p>
+                                <p>Left: </p>
                                 <input type="number" class="form-control" id="cs-cropx" aria-describedby="directory" placeholder="0" step=".01" min="0" max="1">
                             </div>
                             <div class="col">
-                                <p>Crop Width: </p>
+                                <p>Right: </p>
                                 <input type="number" class="form-control" id="cs-crop-width" aria-describedby="directory" placeholder="1" step=".01" min="0" max="1">
                             </div>
                         </div>
@@ -123,11 +123,11 @@
                                 <input type="number" class="form-control" id="cs-resolution" aria-describedby="directory" placeholder="256">
                             </div>
                             <div class="col">
-                                <p>Crop Y: </p>
+                                <p>Top: </p>
                                 <input type="number" class="form-control" id="cs-cropy" aria-describedby="directory" placeholder="0" step=".01" min="0" max="1">
                             </div>
                             <div class="col">
-                                <p>Crop Height: </p>
+                                <p>Bottom: </p>
                                 <input type="number" class="form-control" id="cs-crop-height" aria-describedby="directory" placeholder="1" step=".01" min="0" max="1">
                             </div>
                         </div>
@@ -203,22 +203,27 @@
 
 
             function load_initial() {
-                eel.camera_names(read('cameras'))().then( function(data) {
+                eel.camera_names_with_cropped_info(read('cameras'))().then( function(data) {
                     let container = document.getElementById('camera-container')
-
                     container.innerHTML = ""
 
-                    let locations = data
+                    let locations = data[0]
+                    let cropped = data[1]
 
                     let num_cameras = locations.length
 
                     for (i = 0; i < num_cameras; i++) {
-                        name = locations[i]
+                        let name = locations[i]
+                        let display_name = name
+                        if (!cropped[i]) {
+                            display_name += " (uncropped)"
+                        }
+
                         container.innerHTML += `
                         <div class="col-auto"">
                             <div class="card shadow text-white bg-dark mb-3" style="width: max-content; padding-left: 5px; padding-right: 5px; padding-bottom: 5px;">
                                 <div class="card-header">
-                                    <h1 class="display-6">` + name +`</h1>
+                                    <h1 class="display-6">` + display_name +`</h1>
                                 </div>
                         ` + `
                                 <img  id="camera-` + name +`" src="assets/noConnection.png" class="card-body d-flex justify-content-center align-items-center bg-light" style="width: 300px; height: 200px; padding: 0px; margin:0px"/>
@@ -230,10 +235,16 @@
                                     <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="cameraSettings('` + name +`')" style="margin-bottom:9px;margin-right:60px; width: 40px; height: 40px">
                                         <i class="bi bi-crop" style="color:white; font-size:20px;"></i>
                                     </div>
+                                    <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="liveViewCamera('` + name + `')" style="margin-bottom:9px;margin-right:105px; width: 40px; height: 40px">
+                                        <i class="bi bi-eye-fill" style="color:white; font-size:20px;"></i>
+                                    </div>
                                 </div>
                                 <div id="during-recording-` + name +`" style="visibility: hidden;">
                                     <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="stopRecording('` + name +`','')" style="margin-bottom:9px;margin-right:15px; width: 40px; height: 40px">
                                         <i class="bi bi-square-fill" style="color:white; font-size:20px;"></i>
+                                    </div>
+                                    <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="liveViewCamera('` + name + `')" style="margin-bottom:9px;margin-right:60px; width: 40px; height: 40px">
+                                        <i class="bi bi-eye-fill" style="color:white; font-size:20px;"></i>
                                     </div>
                                 </div>
                             </div>
@@ -386,7 +397,6 @@
                         document.getElementById('cs-crop-width').onchange = drawBounds
                         document.getElementById('cs-crop-height').onchange = drawBounds
 
-
                         var image = new Image();
                         image.src = document.getElementById('camera-'+camera_name).src
 
@@ -491,6 +501,10 @@
 
             function removeCamera() {
 
+            }
+
+            function liveViewCamera(camera_name) {
+                eel.open_camera_live_view(read('cameras'), camera_name)
             }
 
             function recordCamera(camera_name, dest) {
