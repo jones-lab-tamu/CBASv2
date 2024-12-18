@@ -44,6 +44,8 @@ import threading
 
 from classifier_head import classifier
 
+import startup_page
+
 def remove_leading_zeros(num):
     for i in range(0,len(num)):
         if num[i]!='0':
@@ -1217,57 +1219,6 @@ def make_recording_dir(root, sub_dir, camera_name):
     return False
 
 @eel.expose
-def project_exists(project_directory):
-    global recordings
-
-    project = project_directory
-
-    cameras = os.path.join(project, 'cameras')
-    recordings = os.path.join(project, 'recordings')
-    models = os.path.join(project, 'models')
-    data_sets = os.path.join(project, 'data_sets')
-
-    if os.path.exists(project):
-        if os.path.exists(cameras) and os.path.exists(recordings) and os.path.exists(models) and os.path.exists(data_sets):
-            return True, {'project':project, 'cameras':cameras, 'recordings':recordings, 'models':models, 'data_sets':data_sets}
-        else:
-            return False, None
-    else:
-        return False, None
-
-@eel.expose
-def create_project(parent_directory, project_name):
-
-    global recordings
-
-    # main project directory
-    project = os.path.join(parent_directory, project_name)
-
-    # make the names of the directories
-    cameras = os.path.join(project, 'cameras')
-    recordings = os.path.join(project, 'recordings')
-    models = os.path.join(project, 'models')
-    data_sets = os.path.join(project, 'data_sets')
-
-    # check to see if the project already exists
-    if os.path.exists(project):
-        print('Project already exists. Please choose a different name or location.')
-        return False, None
-    else:
-        print('Creating project...')
-
-    # make all those directories
-    os.mkdir(project)
-    os.mkdir(cameras)
-    os.mkdir(recordings)
-    os.mkdir(models)
-    os.mkdir(data_sets)
-
-    print(f'Project creation successful!')
-
-    return True, {'project':project, 'cameras':cameras, 'recordings':recordings, 'models':models, 'data_sets':data_sets}
-
-@eel.expose
 def make_actogram(root, sub_dir, model, behavior, framerate, binsize, start, color, threshold, norm, lightcycle):
 
     global actogram
@@ -1816,7 +1767,6 @@ def pop_instance():
 
 @eel.expose
 def label_frame(value):
-
     global label_dict
 
     global label
@@ -1825,13 +1775,46 @@ def label_frame(value):
 
     behaviors = label_dict['behaviors']
 
-    if value>=len(behaviors):
+    beh = None
+    ind = None
+
+    for b in label_dict['behaviors']:
+        if beh != None or ind != None:
+            break
+
+        for i,inst in enumerate(label_dict['labels'][b]):
+            if inst['start'] <= label_index <= inst['end']:
+                beh = b
+                ind = i
+                break
+    
+    if beh is not None and label == -1:
+        old_instance = label_dict[beh][ind]
+
+        new_instance = {
+            'video': label_videos[label_vid_index],
+            'start': old_instance['start'],
+            'end': old_instance['end'],
+            'label': beh
+        }
+
+        label_dict[value] = new_instance
+
+        del label_dict[beh][ind]
+
+        # save the label dictionary
+        with open(label_dict_path, 'w+') as file:
+            yaml.dump(label_dict, file, allow_unicode=True)
+
+        update_counts()
+
+    if value >= len(behaviors):
         return False
 
-    if value==label:
+    if value == label:
         add_instance()
         label = -1
-    elif label==-1:
+    elif label == -1:
         label = value
         start = label_index
     else:
