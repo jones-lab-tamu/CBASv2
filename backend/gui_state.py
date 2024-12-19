@@ -1,1 +1,3 @@
-proj = None
+import cbas
+
+proj: cbas.Project = None

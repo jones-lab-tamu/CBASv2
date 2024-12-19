@@ -3,6 +3,7 @@ import cbas
 
 import gui_state
 
+
 @eel.expose
 def create_project(parent_directory, project_name):
     gui_state.proj = cbas.Project.create_project(parent_directory, project_name)
@@ -17,6 +18,7 @@ def create_project(parent_directory, project_name):
         "models": gui_state.proj.models_dir,
         "data_sets": gui_state.proj.datasets_dir,
     }
+
 
 @eel.expose
 def load_project(path):
