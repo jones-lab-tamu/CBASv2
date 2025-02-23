@@ -66,7 +66,7 @@
                     <h6 class="text-light" style="padding:5px; width:100px; padding-left:10px">Light Cycle: </h6>
                     <input type="text" class="form-control" id="vs-lcycle" aria-describedby="directory" value="1" style="padding:5px; height: 30px; width:220px" onchange="adjustActogram()">
                 </div>
-                <h5 id="actogram-title" class="text-light">Actogram</h5>
+                <!--<h5 id="actogram-title" class="text-light">Actogram</h5>-->
                 <img id="actogram-image" src="" alt="" style="display: none;">
             </div>
         </div>
@@ -174,8 +174,8 @@
                 let norm = document.getElementById('vs-norm').value
                 let lc = document.getElementById('vs-lcycle').value
 
-                let titleElem = document.getElementById('actogram-title') //added 2/23 + line 69 HTMl
-                titleElem.textContent = 'Actogram for ' + md + ' - ' + beh //added 2/23
+                //let titleElem = document.getElementById('actogram-title') //added 2/23 + line 69 HTMl
+                //titleElem.textContent = 'Actogram for ' + md + ' - ' + beh //added 2/23
 
                 eel.make_actogram(rd, sd, md, beh, fr, bs, st, col, th, norm, lc)
             }
