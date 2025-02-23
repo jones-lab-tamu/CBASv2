@@ -71,6 +71,9 @@ function setValues(rd, sd, md, beh) {
     let norm = document.getElementById('vs-norm').value
     let lc = document.getElementById('vs-lcycle').value
 
+    let titleElem = document.getElementById('actogram-title') // added 2/23, acto title
+    titleElem.textContent = "Actogram for " + md + " - " + beh // added 2/23 ^^
+
     eel.make_actogram(rd, sd, md, beh, fr, bs, st, col, th, norm, lc)
 }
 
