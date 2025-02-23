@@ -6,75 +6,172 @@
   user-select: none;
   position: fixed;
   bottom: 30px;
-  right: 30px; }
-  .fab-container:hover {
-    height: 100%;
-    cursor: pointer; }
-    .fab-container:hover .sub-button1:nth-child(2) {
-      transform: translateY(-80px); }
-    .fab-container:hover .sub-button1:nth-child(3) {
-      transform: translateY(-140px); }
-  .fab-container .fab {
-    position: absolute;
-    bottom: 0px;
-    right: 15px;
-    height: 70px;
-    width: 70px;
-    background-color: #4ba2ff;
-    border-radius: 50%;
-    z-index: 2; }
-    .fab-container .fab::before {
-      content: " ";
-      position: absolute;
-      bottom: 0;
-      right: 0;
-      height: 35px;
-      width: 35px;
-      background-color: inherit;
-      border-radius: 0 0 10px 0;
-      z-index: -1; }
-    .fab-container .fab .fab-content {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      width: 100%;
-      border-radius: 50%; }
-      .fab-container .fab .fab-content .material-icons {
-        color: white;
-        font-size: 48px; }
-  .fab-container .sub-button {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    bottom: 10px;
-    right: 25px;
-    height: 50px;
-    width: 50px;
-    background-color: #4ba2ff;
-    border-radius: 50%;
-    transition: all .3s ease; }
-    .fab-container .sub-button:hover {
-      cursor: pointer; }
-    .fab-container .sub-button .i {
-      color: white; }
-  .fab-container .sub-button1 {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    bottom: 10px;
-    right: 25px;
-    height: 50px;
-    width: 50px;
-    background-color: #4ba2ff;
-    border-radius: 50%;
-    transition: all .3s ease; }
-    .fab-container .sub-button1:hover {
-      cursor: pointer; }
-    .fab-container .sub-button1 .i {
-      color: white; }
+  right: 30px;
+}
+.fab-container:hover {
+  height: 100%;
+  cursor: pointer;
+}
+.fab-container:hover .sub-button1:nth-child(2) {
+  transform: translateY(-80px);
+}
+.fab-container:hover .sub-button1:nth-child(3) {
+  transform: translateY(-140px);
+}
+.fab-container .fab {
+  position: absolute;
+  bottom: 0px;
+  right: 15px;
+  height: 70px;
+  width: 70px;
+  background-color: rgb(75, 162, 255);
+  border-radius: 50%;
+  z-index: 2;
+}
+.fab-container .fab::before {
+  content: " ";
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  height: 35px;
+  width: 35px;
+  background-color: inherit;
+  border-radius: 0 0 10px 0;
+  z-index: -1;
+}
+.fab-container .fab .fab-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  border-radius: 50%;
+}
+.fab-container .fab .fab-content .material-icons {
+  color: white;
+  font-size: 48px;
+}
+.fab-container .sub-button {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  bottom: 10px;
+  right: 25px;
+  height: 50px;
+  width: 50px;
+  background-color: rgb(75, 162, 255);
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+.fab-container .sub-button:hover {
+  cursor: pointer;
+}
+.fab-container .sub-button .i {
+  color: white;
+}
+.fab-container .sub-button1 {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  bottom: 10px;
+  right: 25px;
+  height: 50px;
+  width: 50px;
+  background-color: rgb(75, 162, 255);
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+.fab-container .sub-button1:hover {
+  cursor: pointer;
+}
+.fab-container .sub-button1 .i {
+  color: white;
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+.blinking {
+  animation: fadeInOut 3s infinite;
+}
+
+.fab-container-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  user-select: none;
+  position: fixed;
+  bottom: 30px;
+  left: 30px;
+}
+
+.fab-container-left .fab {
+  position: relative;
+  margin-bottom: 10px; /* Adds spacing between buttons */
+  height: 70px;
+  width: 70px;
+  background-color: rgb(75, 162, 255); /* Use $primary if using SCSS */
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.fab-container-left .fab:hover {
+  background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
+}
+
+.fab-container-left .fab i {
+  color: white;
+  font-size: 28px;
+}
+
+.fab-container-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  user-select: none;
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+}
+
+.fab-container-right .fab {
+  position: relative;
+  margin-bottom: 10px; /* Adds spacing between buttons */
+  height: 70px;
+  width: 70px;
+  background-color: rgb(75, 162, 255); /* Use $primary if using SCSS */
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.fab-container-right .fab:hover {
+  background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
+}
+
+.fab-container-right .fab i {
+  color: white;
+  font-size: 28px;
+}
 
 .fab-container-refresh {
   display: flex;
@@ -84,26 +181,30 @@
   user-select: none;
   position: fixed;
   bottom: 30px;
-  left: 30px; }
-  .fab-container-refresh:hover {
-    height: 100%;
-    cursor: pointer; }
-  .fab-container-refresh .fab {
-    position: absolute;
-    height: 70px;
-    width: 70px;
-    bottom: 0px;
-    left: 15px;
-    background-color: #4ba2ff;
-    border-radius: 50%;
-    z-index: 2; }
-    .fab-container-refresh .fab .fab-content {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      width: 100%;
-      border-radius: 50%; }
+  left: 30px;
+}
+.fab-container-refresh:hover {
+  height: 100%;
+  cursor: pointer;
+}
+.fab-container-refresh .fab {
+  position: absolute;
+  height: 70px;
+  width: 70px;
+  bottom: 0px;
+  left: 15px;
+  background-color: rgb(75, 162, 255);
+  border-radius: 50%;
+  z-index: 2;
+}
+.fab-container-refresh .fab .fab-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  border-radius: 50%;
+}
 
 .fab-container-inference {
   display: flex;
@@ -113,26 +214,30 @@
   user-select: none;
   position: fixed;
   top: 70px;
-  right: 15px; }
-  .fab-container-inference:hover {
-    height: 100%;
-    cursor: pointer; }
-  .fab-container-inference .fab {
-    position: absolute;
-    height: 50px;
-    width: 50px;
-    top: 0px;
-    right: 15px;
-    background-color: #4ba2ff;
-    border-radius: 50%;
-    z-index: 2; }
-    .fab-container-inference .fab .fab-content {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      width: 100%;
-      border-radius: 50%; }
+  right: 15px;
+}
+.fab-container-inference:hover {
+  height: 100%;
+  cursor: pointer;
+}
+.fab-container-inference .fab {
+  position: absolute;
+  height: 50px;
+  width: 50px;
+  top: 0px;
+  right: 15px;
+  background-color: rgb(75, 162, 255);
+  border-radius: 50%;
+  z-index: 2;
+}
+.fab-container-inference .fab .fab-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  border-radius: 50%;
+}
 
 #cover-spin {
   position: fixed;
@@ -144,20 +249,27 @@
   bottom: 0;
   background-color: rgba(0, 0, 0, 0.3);
   z-index: 9999;
-  visibility: hidden; }
+  visibility: hidden;
+}
 
 @-webkit-keyframes spin {
   from {
-    -webkit-transform: rotate(0deg); }
+    -webkit-transform: rotate(0deg);
+  }
   to {
-    -webkit-transform: rotate(360deg); } }
+    -webkit-transform: rotate(360deg);
+  }
+}
 @keyframes spin {
   from {
-    transform: rotate(0deg); }
+    transform: rotate(0deg);
+  }
   to {
-    transform: rotate(360deg); } }
+    transform: rotate(360deg);
+  }
+}
 #cover-spin::after {
-  content: '';
+  content: "";
   display: block;
   position: sticky;
   left: 44vw;
@@ -169,8 +281,9 @@
   border-top-color: transparent;
   border-width: 4px;
   border-radius: 50%;
-  -webkit-animation: spin .8s linear infinite;
-  animation: spin .8s linear infinite; }
+  -webkit-animation: spin 0.8s linear infinite;
+  animation: spin 0.8s linear infinite;
+}
 
 #inference-bar {
   position: fixed;
@@ -179,7 +292,8 @@
   left: 30vw;
   right: 30vw;
   bottom: 45px;
-  visibility: hidden; }
+  visibility: hidden;
+}
 
 #fun-blurb {
   position: absolute;
@@ -189,13 +303,16 @@
   color: purple;
   text-align: center;
   font-size: 25px;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   font-weight: bolder;
   transform: rotate(-15deg);
-  animation: anisize 1s infinite; }
+  animation: anisize 1s infinite;
+}
 
 @keyframes anisize {
   50% {
-    font-size: 28px; } }
+    font-size: 28px;
+  }
+}
 
 /*# sourceMappingURL=index.css.map */

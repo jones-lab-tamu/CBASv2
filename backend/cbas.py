@@ -2,6 +2,9 @@ import os
 import h5py
 
 import time
+import cairo
+import base64
+import math
 
 import shutil
 
@@ -27,15 +30,18 @@ import classifier_head
 from torch import nn
 import torch.optim as optim
 
-
 def encode_file(encoder: nn.Module, path: str) -> str:
     # We use decord to efficiently load a video as a Torch tensor.
-    reader = decord.VideoReader(path, ctx=decord.cpu(0))
+    try:
+        reader = decord.VideoReader(path, ctx=decord.cpu(0))
+    except:
+        return None
+
     frames = reader.get_batch(range(0, len(reader), 1)).asnumpy()
     frames = torch.from_numpy(frames[:, :, :, 1] / 255).half()
 
     # TODO: I am not fully convinced this is most efficient? How can we increase throughput.
-    batch_size = 1024
+    batch_size = 256
 
     clss = []
 
@@ -54,6 +60,62 @@ def encode_file(encoder: nn.Module, path: str) -> str:
         file.create_dataset("cls", data=torch.stack(clss).numpy())
 
     return out_file_path
+
+def infer_file(
+    file_path: str,
+    model: nn.Module,
+    dataset_name: str,
+    behaviors: str,
+    seq_len: int,
+    device=None,
+):
+    output_file = file_path.replace(
+        "_cls.h5", "_" + dataset_name + "_outputs.csv"
+    )
+    with h5py.File(file_path, "r") as file:
+        cls = np.array(file["cls"][:])
+
+    cls = torch.from_numpy(cls - np.mean(cls, axis=0)).half()
+
+    predictions = []
+    batch = []
+
+    if len(cls) < seq_len:
+        return None
+
+    model = model.to(device)
+
+    for ind in range(seq_len // 2, len(cls) - seq_len // 2):
+        batch.append(cls[ind - seq_len // 2 : ind + seq_len // 2 + 1])
+
+        if len(batch) >= 4096 or ind == len(cls) - seq_len // 2 - 1:
+            batch = torch.stack(batch)
+            with torch.no_grad() and torch.amp.autocast(device):
+                logits = model.forward_nodrop(batch.to(device))
+                probs = torch.softmax(logits, dim=1)
+
+                predictions.extend(probs.detach().cpu().numpy())
+
+            batch = []
+
+    total_predictions = []
+
+    for ind in range(len(cls)):
+
+        if ind < seq_len // 2:
+            total_predictions.append(predictions[0])
+        elif ind >= len(cls) - seq_len // 2:
+            total_predictions.append(predictions[-1])
+        else:
+            total_predictions.append(predictions[ind - seq_len // 2])
+
+    total_predictions = np.array(total_predictions)
+
+    dataframe = pd.DataFrame(total_predictions, columns=behaviors)
+
+    dataframe.to_csv(output_file)
+
+    return output_file
 
 
 class DinoEncoder(nn.Module):
@@ -95,7 +157,7 @@ class DinoEncoder(nn.Module):
         return cls
 
 
-class Dataset(torch.utils.data.Dataset):
+class DatasetLoader(torch.utils.data.Dataset):
     def __init__(self, seqs, labels, behaviors):
         self.seqs = seqs
         self.labels = labels
@@ -118,7 +180,7 @@ class Recording:
         self.name = os.path.basename(self.path)
 
         # We need to check all the files we have encodeded.
-        self.unencodeded_files = []
+        self.unencoded_files = []
 
         self.video_files = [
             f.path for f in os.scandir(self.path) if f.path.endswith(".mp4")
@@ -136,10 +198,33 @@ class Recording:
             try:
                 f = h5py.File(h5_file_path, "r")
             except:
-                self.unencodeded_files.append(video_file)
+                self.unencoded_files.append(video_file)
+
+        for video_file in self.video_files:
+            h5_file_path = video_file.replace(".mp4", "_cls.h5")
+            try:
+                f = h5py.File(h5_file_path, "r")
+            except:
+                self.unencoded_files.append(video_file)
+
+        classification_files = [
+            f.path for f in os.scandir(self.path) if f.path.endswith(".csv")
+        ]
+
+        self.classifications = {}
+
+        for file in classification_files:
+            model = file.split('_')[-2]
+
+            if model not in self.classifications:
+                self.classifications[model] = []
+            
+            self.classifications[model].append(file)
+        
+        print(self.path, self.classifications)
 
     def encode(self, encoder: nn.Module):
-        for file in self.unencodeded_files:
+        for file in self.unencoded_files:
             out_file_path = encode_file(encoder, file)
             if out_file_path not in self.encoding_files:
                 self.encoding_files.append(out_file_path)
@@ -153,53 +238,7 @@ class Recording:
         device=None,
     ):
         for file_path in self.encoding_files:
-            output_file = file_path.replace(
-                "_cls.h5", "_" + dataset_name + "_outputs.csv"
-            )
-            with h5py.File(file_path, "r") as file:
-                cls = np.array(file["cls"][:])
-
-            cls = torch.from_numpy(cls - np.mean(cls, axis=0)).half()
-
-            predictions = []
-            batch = []
-
-            if len(cls) < seq_len:
-                continue
-
-            model = model.to(device)
-            print(seq_len)
-
-            for ind in range(seq_len // 2, len(cls) - seq_len // 2):
-                batch.append(cls[ind - seq_len // 2 : ind + seq_len // 2 + 1])
-
-                if len(batch) >= 4096 or ind == len(cls) - seq_len // 2 - 1:
-                    batch = torch.stack(batch)
-                    with torch.no_grad() and torch.amp.autocast(device):
-                        logits = model.forward_nodrop(batch.to(device))
-                        probs = torch.softmax(logits, dim=1)
-
-                        predictions.extend(probs.detach().cpu().numpy())
-
-                    batch = []
-
-            total_predictions = []
-
-            for ind in range(len(cls)):
-
-                if ind < seq_len // 2:
-                    total_predictions.append(predictions[0])
-                elif ind >= len(cls) - seq_len // 2:
-                    total_predictions.append(predictions[-1])
-                else:
-                    total_predictions.append(predictions[ind - seq_len // 2])
-
-            total_predictions = np.array(total_predictions)
-
-            dataframe = pd.DataFrame(total_predictions, columns=behaviors)
-
-            dataframe.to_csv(output_file)
-
+            infer_file(file_path, model, dataset_name, behaviors, seq_len, device=None)
 
 class Camera:
     def __init__(self, config: dict[str, str], project: "Project"):
@@ -328,20 +367,377 @@ class Camera:
 
         return False
 
+class Model:
+    def __init__(self, path: str):
+        self.path = path
+
+        self.config_path = os.path.join(path, "config.yaml")
+        self.weights_path = os.path.join(path, "model.pth")
+
+        self.name = os.path.basename(path)
+
+        if not os.path.exists(self.config_path):
+            raise FileNotFoundError(self.config_path)
+
+        with open(self.config_path) as file:
+            self.config = yaml.safe_load(file)
+
+        if not os.path.exists(self.weights_path):
+            raise FileNotFoundError(self.weights_path)
 
 class Dataset:
     def __init__(self, path: str):
         self.path = path
 
-        with open(os.path.join(path, "config.yaml")) as file:
-            config = yaml.safe_load(file)
+        self.config_path = os.path.join(path, "config.yaml")
+        self.labels_path = os.path.join(path, "labels.yaml")
 
+        if not os.path.exists(self.config_path):
+            raise FileNotFoundError(self.config_path)
+
+        with open(self.config_path) as file:
+            self.config = yaml.safe_load(file)
+
+        if not os.path.exists(self.labels_path):
+            raise FileNotFoundError(self.labels_path)
+
+        with open(self.labels_path) as file:
+            self.labels = yaml.safe_load(file)
+
+def remove_leading_zeros(num):
+    for i in range(0, len(num)):
+        if num[i] != "0":
+            return int(num[i:])
+    return 0
+
+class Actogram:
+    def __init__(
+        self,
+        directory,
+        model,
+        behavior,
+        framerate,
+        start,
+        binsize,
+        color,
+        threshold,
+        norm,
+        lightcycle,
+        width=500,
+        height=500,
+    ):
+
+        self.directory = directory
+        self.model = model
+        self.behavior = behavior
+        self.framerate = framerate
+        self.start = start
+        self.color = color
+        self.threshold = threshold
+        self.norm = norm
+        self.lightcycle = lightcycle
+
+        self.width = width
+        self.height = height
+
+        self.binsize = binsize
+
+        self.timeseries()
+
+        self.draw()
+
+    def draw(self):
+
+        self.cycles = []
+        for c in self.lightcycle:
+            if c == "1":
+                self.cycles.append(True)
+            else:
+                self.cycles.append(False)
+
+        clocklab_time = (
+            "{:02d}".format(int(self.start))
+            + ":"
+            + "{:02d}".format(int(60 * (self.start - int(self.start))))
+        )
+
+        clocklab_file = [
+            self.behavior,
+            "01-jan-2024",
+            clocklab_time,
+            self.binsize / self.framerate / 60 * 4,
+            0,
+            0,
+            0,
+        ]
+
+        bins = []
+
+        for b in range(0, len(self.totalts), self.binsize):
+            bins.append(
+                (
+                    sum(np.array(self.totalts[b : b + self.binsize]) >= self.threshold),
+                    b / self.framerate / 3600,
+                )
+            )
+            clocklab_file.append(
+                sum(np.array(self.totalts[b : b + self.binsize]) >= self.threshold)
+            )
+
+        df = pd.DataFrame(data=np.array(clocklab_file))
+
+        self.clfile = os.path.join(
+            self.directory, self.model + "-" + self.behavior + "-" + "clocklab.csv"
+        )
+
+        df.to_csv(self.clfile, header=False, index=False)
+
+        awdfile = self.clfile.replace(".csv", ".awd")
+
+        if os.path.exists(awdfile):
+            os.remove(awdfile)
+
+        os.rename(self.clfile, self.clfile.replace(".csv", ".awd"))
+
+        self.timeseries_data = bins
+
+        if len(bins) < 2:
+            print("Not enough videos to make an actogram.")
+            return
+
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, self.width, self.height)
+        ctx = cairo.Context(surface)
+
+        width = self.width
+        height = self.height
+
+        ctx.scale(width, height)
+
+        self.align_draw(ctx)
+
+        self.file = os.path.join(
+            self.directory, self.model + "-" + self.behavior + "-" + "actogram.png"
+        )
+
+        surface.write_to_png(self.file)
+
+        frame = cv2.imread(self.file)
+
+        ret, frame = cv2.imencode(".jpg", frame)
+
+        frame = frame.tobytes()
+
+        blob = base64.b64encode(frame)
+        self.blob = blob.decode("utf-8")
+
+    def align_draw(self, ctx):
+
+        padding = 0.01
+
+        actogram_width = 1 - 2 * padding
+        actogram_height = 1 - 2 * padding
+
+        cx = padding
+        cy = padding
+
+        self.draw_actogram(ctx, cx, cy, actogram_width, actogram_height, padding)
+
+    def draw_actogram(self, ctx, tlx, tly, width, height, padding):
+
+        ctx.set_line_width(0.005)
+
+        ctx.rectangle(
+            tlx - padding / 4,
+            tly - padding / 4,
+            width + padding / 2,
+            height + padding / 2,
+        )
+        ctx.set_source_rgba(0.1, 0.1, 0.1, 1)
+        ctx.fill()
+
+        tsdata = self.timeseries_data
+
+        total_days = math.ceil((tsdata[-1][1] + self.start) / 24)
+
+        if total_days % 2 == 0:
+            total_days -= 1
+
+        day_height = height / total_days
+
+        bin_width = 1 / 48 * self.binsize / 36000
+
+        ts = np.array([a[0] for a in tsdata])
+        times = np.array([a[1] + self.start for a in tsdata])
+
+        for d in range(total_days):
+
+            by = tly + (d + 1) * day_height
+
+            d1 = d
+
+            valid = np.logical_and(times > (d1 * 24), times <= ((d1 + 2) * 24))
+
+            if d1 % 2 != 0:
+                adj_times = times[valid] + 24
+            else:
+                adj_times = times[valid]
+
+            adj_times = adj_times % 48
+
+            series = ts[valid]
+
+            if len(series) == 0:
+                continue
+
+            # normalize the series
+            series = np.array(series)
+            series = series / self.norm
+
+            series = series * 0.90
+
+            if self.cycles is not None and d < len(self.cycles):
+                LD = self.cycles[d]
+            else:
+                LD = True
+
+            if LD:
+                ctx.set_source_rgb(223 / 255, 223 / 255, 223 / 255)
+                ctx.rectangle(
+                    tlx + 0 / 48 * width, by - day_height, 6 / 48 * width, day_height
+                )
+                ctx.fill()
+                ctx.rectangle(
+                    tlx + 18 / 48 * width, by - day_height, 12 / 48 * width, day_height
+                )
+                ctx.fill()
+                ctx.rectangle(
+                    tlx + 42 / 48 * width, by - day_height, 6 / 48 * width, day_height
+                )
+                ctx.fill()
+
+                ctx.set_source_rgb(255 / 255, 239 / 255, 191 / 255)
+                ctx.rectangle(
+                    tlx + 6 / 48 * width, by - day_height, 12 / 48 * width, day_height
+                )
+                ctx.fill()
+                ctx.rectangle(
+                    tlx + 30 / 48 * width, by - day_height, 12 / 48 * width, day_height
+                )
+                ctx.fill()
+
+            else:
+                ctx.set_source_rgb(223 / 255, 223 / 255, 223 / 255)
+                ctx.rectangle(
+                    tlx + 0 / 48 * width, by - day_height, 6 / 48 * width, day_height
+                )
+                ctx.fill()
+                ctx.rectangle(
+                    tlx + 18 / 48 * width, by - day_height, 12 / 48 * width, day_height
+                )
+                ctx.fill()
+                ctx.rectangle(
+                    tlx + 42 / 48 * width, by - day_height, 6 / 48 * width, day_height
+                )
+                ctx.fill()
+
+                ctx.set_source_rgb(246 / 255, 246 / 255, 246 / 255)
+                ctx.rectangle(
+                    tlx + 6 / 48 * width, by - day_height, 12 / 48 * width, day_height
+                )
+                ctx.fill()
+                ctx.rectangle(
+                    tlx + 30 / 48 * width, by - day_height, 12 / 48 * width, day_height
+                )
+                ctx.fill()
+
+            for t in range(len(adj_times)):
+                timepoint = adj_times[t]
+                value = series[t]
+
+                a_time = timepoint / 48
+
+                ctx.rectangle(
+                    tlx + a_time * width,
+                    by - value * day_height,
+                    bin_width * width,
+                    value * day_height,
+                )
+                ctx.set_source_rgba(
+                    self.color[0] / 255, self.color[1] / 255, self.color[2] / 255, 1
+                )
+                ctx.fill()
+
+        for d in range(total_days):
+
+            by = tly + (d + 1) * day_height
+
+            ctx.set_line_width(0.002)
+            ctx.set_source_rgb(0, 0, 0)
+            ctx.move_to(tlx, by)
+            ctx.line_to(tlx + 48 / 48 * width, by)
+            ctx.stroke()
+
+    def timeseries(self):
+
+        behavior = self.behavior
+
+        valid_files = [
+            file
+            for file in os.listdir(self.directory)
+            if file.endswith(".csv") and "_" + self.model + "_" in file
+        ]
+
+        # Split the files into path and camera number for use later
+        split_files = [
+            (
+                os.path.join(self.directory, file),
+                remove_leading_zeros(file.split("_")[-3]),
+            )
+            for file in valid_files
+        ]
+
+        split_files.sort(key=lambda vf: vf[1])
+
+        last_num = split_files[-1][1]
+
+        if len(split_files) != last_num + 1:
+
+            prev_num = -1
+            for vf, num in split_files:
+                if num != prev_num + 1:
+                    raise Exception(f"Missing number - {prev_num+1}")
+
+        self.totalts = []
+
+        col_index = -1
+
+        continuous = False
+
+        for vf, num in split_files:
+
+            dataframe = pd.read_csv(vf)
+
+            if col_index == -1:
+                behaviors = dataframe.columns.to_list()[1:]
+
+                col_index = behaviors.index(behavior)
+
+            top = np.argmax(dataframe[behaviors].to_numpy(), axis=1) == col_index
+            values = np.max(dataframe[behaviors].to_numpy(), axis=1)
+
+            values = top * values
+
+            if continuous:
+                frames = dataframe[behavior].to_list()
+            else:
+                frames = values
+
+            self.totalts.extend(frames)
 
 class InvalidProject(Exception):
     def __init__(self, path):
         self.path = path
         super().__init__(f"{self.path} is not a valid project")
-
 
 class Project:
     def __init__(self, path: str):
@@ -366,7 +762,7 @@ class Project:
         self.active_recordings = {}
 
         # Build out our list of recordings:
-        self.recordings: dict[str, list[Recording]] = {}
+        self.recordings: dict[str, dict[str, Recording]] = {}
         days = [f.path for f in os.scandir(self.recordings_dir) if f.is_dir()]
 
         for day in days:
@@ -386,6 +782,12 @@ class Project:
                 config = yaml.safe_load(file)
 
             self.cameras[config["name"]] = Camera(config, self)
+
+        self.models = {}
+        for model_path in [f.path for f in os.scandir(self.models_dir) if f.is_dir()]:
+            self.models[os.path.basename(model_path)] = Model(model_path)
+        
+        self.models["JonesLabModel"] = Model(os.path.join("models", "JonesLabModel"))
 
         # Build out list of datasets
         self.datasets = {}
@@ -437,6 +839,7 @@ class Project:
 
     def infer_recordings(self, device=None):
         model = torch.load("CBASv2/models/JonesLabModel/model.pth")
+
         with open("CBASv2/models/JonesLabModel/config.yaml", "r") as file:
             config = yaml.safe_load(file)
 
@@ -545,9 +948,52 @@ class Project:
 
         return torch.stack(seqs), torch.stack(labels)
 
+    def create_dataset(self, name: str, behaviors: list[str], recordings: list[str]):
+        directory = os.path.join(self.datasets_dir, name)
+        os.mkdir(directory)
+
+        dataset_config = os.path.join(directory, "config.yaml")
+        label_file = os.path.join(directory, "labels.yaml")
+
+        whitelist = []
+
+        for r in recordings:
+            whitelist.append(r + "\\")
+
+        metrics = {
+            b: {
+                "Train #": 0,
+                "Test #": 0,
+                "Precision": "N/A",
+                "Recall": "N/A",
+                "F1 Score": "N/A",
+            }
+            for b in behaviors
+        }
+
+        dconfig = {
+            "name": name,
+            "behaviors": behaviors,
+            "whitelist": whitelist,
+            "model": None,
+            "metrics": metrics,
+        }
+
+        labelconfig = {"behaviors": behaviors, "labels": {b: [] for b in behaviors}}
+
+        with open(dataset_config, "w+") as file:
+            yaml.dump(dconfig, file, allow_unicode=True)
+
+        with open(label_file, "w+") as file:
+            yaml.dump(labelconfig, file, allow_unicode=True)
+
+        dataset = Dataset(directory)
+        self.datasets[name] = dataset
+        return dataset
+
     def load_dataset(
         self, name: str, seed=42, split=0.2, seq_len=15
-    ) -> tuple[Dataset, Dataset]:
+    ) -> tuple[DatasetLoader, DatasetLoader]:
         dataset_path = os.path.join(self.path, "data_sets", name)
 
         if seq_len % 2 == 0:
@@ -623,7 +1069,7 @@ class Project:
             test_insts, seq_len=seq_len, behaviors=behaviors
         )
 
-        return Dataset(train_seqs, train_labels, behaviors), Dataset(
+        return DatasetLoader(train_seqs, train_labels, behaviors), DatasetLoader(
             test_seqs, test_labels, behaviors
         )
 
@@ -703,7 +1149,6 @@ def train_lstm_model(
             print(f"Epoch: {e} Batch: {i} Total Loss: {loss.item()}")
 
     return model
-
 
 """
 # Library usage

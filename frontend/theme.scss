@@ -81,6 +81,84 @@ $primary: rgb(75, 162, 255);
   }
 }
 
+@keyframes fadeInOut {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+.blinking {
+  animation: fadeInOut 3s infinite;
+}
+
+.fab-container-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  user-select: none;
+  position: fixed;
+  bottom: 30px;
+  left: 30px;
+}
+
+.fab-container-left .fab {
+  position: relative;
+  margin-bottom: 10px; /* Adds spacing between buttons */
+  height: 70px;
+  width: 70px;
+  background-color: rgb(75, 162, 255); /* Use $primary if using SCSS */
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.fab-container-left .fab:hover {
+  background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
+}
+
+.fab-container-left .fab i {
+  color: white;
+  font-size: 28px;
+}
+
+.fab-container-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  user-select: none;
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+}
+
+.fab-container-right .fab {
+  position: relative;
+  margin-bottom: 10px; /* Adds spacing between buttons */
+  height: 70px;
+  width: 70px;
+  background-color: rgb(75, 162, 255); /* Use $primary if using SCSS */
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.fab-container-right .fab:hover {
+  background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
+}
+
+.fab-container-right .fab i {
+  color: white;
+  font-size: 28px;
+}
+
 .fab-container-refresh {
   display: flex;
   flex-direction: column;

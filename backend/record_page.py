@@ -3,6 +3,7 @@ import cv2
 import base64
 
 import datetime
+import subprocess
 import gevent
 from gevent.subprocess import Popen, PIPE
 
@@ -12,17 +13,14 @@ import cbas
 
 import gui_state
 
-
 @eel.expose
 def get_camera_settings(camera_name):
     camera = gui_state.proj.cameras[camera_name]
     return camera.settings_to_dict()
 
-
 @eel.expose
 def save_camera_settings(camera_name, camera_settings):
     gui_state.proj.cameras[camera_name].update_settings(camera_settings)
-
 
 @eel.expose
 def rename_camera(old_camera_name, new_camera_name):
@@ -122,11 +120,22 @@ def create_camera(camera_name, rtsp_url):
 def create_recording_dir(camera_name):
     return gui_state.proj.cameras[camera_name].create_recording_dir()
 
+@eel.expose
+def get_cbas_status():
+    streams = get_active_streams()
+
+    data = {}
+    data["streams"] = streams
+
+    data["encode_file_count"] = len(gui_state.encode_tasks)
+
+    return data
 
 @eel.expose
 def start_camera_stream(camera_name, destination, segment_time):
     camera = gui_state.proj.cameras[camera_name]
 
+    print(f"Recording on camera {camera_name}")
     return camera.start_recording(destination, segment_time)
 
 @eel.expose
@@ -135,11 +144,19 @@ def stop_camera_stream(camera_name):
 
     return camera.stop_recording()
 
-
 @eel.expose
 def get_active_streams():
-    streams = gui_state.proj.active_recordings.keys()
+    streams = list(gui_state.proj.active_recordings.keys())
     if len(streams) == 0:
         return False
 
     return streams
+
+@eel.expose
+def open_camera_live_view(camera_name):
+    rtsp_url = gui_state.proj.cameras[camera_name].rtsp_url
+    vlc_path = r"C:\Program Files\VideoLAN\VLC\vlc.exe"  # Full path to VLC executable
+
+    subprocess.Popen(
+        [vlc_path, rtsp_url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
