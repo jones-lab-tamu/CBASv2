@@ -3,6 +3,7 @@ import cbas
 
 import gui_state
 
+import workthreads
 
 @eel.expose
 def create_project(parent_directory, project_name):
@@ -28,6 +29,15 @@ def load_project(path):
         print(invalid_project.path)
 
         return False, None
+    
+    # Queue up all our unencoded files to be encoded by a workthread
+    gui_state.encode_lock.acquire()
+    for recording_date in gui_state.proj.recordings:
+        for recording_inst in gui_state.proj.recordings[recording_date]:
+            gui_state.encode_tasks.extend(gui_state.proj.recordings[recording_date][recording_inst].unencoded_files)
+    gui_state.encode_lock.release()
+
+    workthreads.start_recording_watcher()
 
     # TODO: This doesn't need to return all this state.
     return True, {

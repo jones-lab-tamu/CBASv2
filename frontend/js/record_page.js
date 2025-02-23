@@ -5,12 +5,7 @@ let loaded = false
 let routing = false
 
 let cameraModal = new bootstrap.Modal(document.getElementById('addCamera'))
-
-function read(attr) {
-    let project_string = window.localStorage.getItem('project')
-    let project = JSON.parse(project_string)
-    return project[attr]
-}
+let statusModal = new bootstrap.Modal(document.getElementById('statusModal'))
 
 function routeRecord() {
     routing = true
@@ -27,10 +22,9 @@ function routeVisualize() {
 
 async function loadCameraHTML() {
     let container = document.getElementById('camera-container');
+    container.innerHTML = ""
 
     let cameras = await eel.get_camera_list()();
-
-    container.innerHTML = ""
 
     for (const [cameraName, cameraSettings] of cameras) {
         let displayName = cameraName;
@@ -40,19 +34,22 @@ async function loadCameraHTML() {
         let cy = parseFloat(cameraSettings['crop_top_y']);
         let cw = parseFloat(cameraSettings['crop_width']);
         let ch = parseFloat(cameraSettings['crop_height']);
+
         let isCropped = cx != 0 || cy != 0 || cw != 1 || ch != 1
         if (!isCropped) {
             displayName += " (uncropped)"
         }
 
+        // <img id="camera-` + cameraName + `" src="assets/noConnection.png" class="card-body d-flex justify-content-center align-items-center bg-light" style="width: 300px; height: 200px; padding: 0px; margin:0px"/>
         container.innerHTML += `
                     <div class="col-auto"">
+
                         <div class="card shadow text-white bg-dark mb-3" style="width: max-content; padding-left: 5px; padding-right: 5px; padding-bottom: 5px;">
                             <div class="card-header">
                                 <h1 class="display-6">` + displayName + `</h1>
                             </div>
                     ` + `
-                            <img  id="camera-` + cameraName + `" src="assets/noConnection.png" class="card-body d-flex justify-content-center align-items-center bg-light" style="width: 300px; height: 200px; padding: 0px; margin:0px"/>
+                            <canvas id="camera-` + cameraName + `" width=300px height=300px></canvas>
                     ` + `
                             <div id="before-recording-` + cameraName + `" style="visibility: visible;">
                                 <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="startCamera('` + cameraName + `')" style="margin-bottom:9px;margin-right:15px; width: 40px; height: 40px">
@@ -75,28 +72,87 @@ async function loadCameraHTML() {
                             </div>
                         </div>
                     </div>`
+
+        var canvas = document.getElementById('camera-' + cameraName);
+        var ctx = canvas.getContext("2d");
+        var image = new Image();
+        image.src = "assets/noConnection.png";
+        image.onload = function () {
+            ctx.drawImage(image, 0, 0, 300, 300)
+        }
+    }
+}
+
+function setRecordAllIcon(isRecording) {
+    const cameraFab = document.querySelector('.fab-container-right .fab:nth-child(2) i'); // Select the second button's icon
+
+    if (isRecording) {
+        // Change to "Stop" icon
+        cameraFab.classList.remove('bi-camera-video-fill');
+        cameraFab.classList.add('bi-square-fill');
+        cameraFab.style.fontSize = '30px'; // Adjust size if needed
+        cameraFab.onclick = stopAllCameras;
+    } else {
+        // Change to "Camera" icon
+        cameraFab.classList.remove('bi-square-fill');
+        cameraFab.classList.add('bi-camera-video-fill');
+        cameraFab.style.fontSize = '25px'; // Adjust size if needed
+        cameraFab.onclick = startAllCameras;
     }
 }
 
 eel.expose(updateImageSrc);
 function updateImageSrc(name, val) {
-    let elem = document.getElementById('camera-' + name);
-    elem.src = "data:image/jpeg;base64, " + val
+    let canvas = document.getElementById('camera-' + name);
+    var ctx = canvas.getContext("2d");
+
+    var img = new Image();
+    img.src = "data:image/jpeg;base64, " + val
+
+    canvas.setAttribute("cbas_image_source", img.src)
+
+    img.onload = async function () {
+        const settings = await eel.get_camera_settings(name)();
+
+        const cropX = settings['crop_left_x'] * img.width;
+        const cropY = settings['crop_top_y'] * img.height;
+        const cropWidth = settings['crop_width'] * img.width;
+        const cropHeight = settings['crop_height'] * img.height;
+        const resolution = settings['resolution']
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        console.log(cropX)
+        console.log(cropY)
+        console.log(cropWidth)
+        console.log(cropHeight)
+        drawImageScaled(img, ctx, cropX, cropY, cropWidth, cropHeight, resolution);
+    }
 }
 
 async function updateCamButtons() {
-    let names = await eel.get_active_streams()()
-    if (names) {
-        for (i = 0; i < names.length; i++) {
-            cameraName = names[i]
+    let cameraNames = (await eel.get_camera_list()()).map(([first, _]) => first);
+    let activeNames = await eel.get_active_streams()();
 
-            let buttons = document.getElementById('before-recording-' + cameraName)
+    console.log(cameraNames)
+    console.log(activeNames)
+
+    if (activeNames) {
+        const allActive = cameraNames.every(camera => activeNames.includes(camera));
+
+        setRecordAllIcon(allActive)
+
+        console.log(allActive)
+
+        for (const activeName of activeNames) {
+
+            let buttons = document.getElementById('before-recording-' + activeName)
             buttons.style.visibility = 'hidden';
 
-            buttons = document.getElementById('during-recording-' + cameraName)
+            buttons = document.getElementById('during-recording-' + activeName)
             buttons.style.visibility = 'visible';
         }
-
+    } else {
+        setRecordAllIcon(false)
     }
 }
 
@@ -161,7 +217,7 @@ async function loadCameraSettings(cameraName) {
         document.getElementById('cs-crop-height').onchange = drawBounds
 
         var image = new Image();
-        image.src = document.getElementById('camera-' + cameraName).src
+        image.src = document.getElementById('camera-' + cameraName).getAttribute("cbas_image_source")
 
         function drawBounds() {
             ctx.clearRect(0, 0, image.width, image.height)
@@ -181,6 +237,7 @@ async function loadCameraSettings(cameraName) {
             w = document.getElementById('cs-crop-width').value * image.width
             h = document.getElementById('cs-crop-height').value * image.height
 
+            // FUCK
             drawImageScaled(image, ctx, x, y, w, h, resolution);
         }
 
@@ -219,6 +276,43 @@ function showCameraModal() {
     cameraModal.show()
 }
 
+async function showStatusModal() {
+    let status = await eel.get_cbas_status()();
+    let streams = status["streams"]
+    if (!streams) {
+        document.getElementById("status-streams").innerText = "No cameras are currently recording."
+    } else {
+        document.getElementById("status-streams").innerText = "Recording cameras: " + streams.join(", ")
+    }
+
+    let encodeFileCount = status["encode_file_count"]
+    document.getElementById("status-encode-count").innerText = "Video files to encode: " + encodeFileCount;
+
+    statusModal.show()
+}
+
+async function updateStatusModalIcon() {
+    let cameraIcon = document.getElementById("status-camera-icon");
+    let cameraOutline = document.getElementById("status-camera-outline");
+
+    let status = await eel.get_cbas_status()();
+
+    let streams = status["streams"]
+    if (!streams) {
+        cameraIcon.style.color = "white"; // Set to grey if inactive
+        cameraIcon.style.animation = "none";
+
+        cameraOutline.style.color = "white";
+        cameraOutline.style.animation = "none";
+    } else {
+        cameraIcon.style.color = "red"; // Set to red if active
+        cameraIcon.style.animation = "fadeInOut 1s infinite";
+
+        cameraOutline.style.color = "red";
+        cameraOutline.style.animation = "fadeInOut 1s infinite";
+    }
+}
+
 async function addCamera() {
     let name = document.getElementById('camera-name').value
     let rtsp = document.getElementById('rtsp-url').value
@@ -249,7 +343,7 @@ function removeCamera() {
 }
 
 function liveViewCamera(cameraName) {
-    eel.open_camera_live_view(read('cameras'), cameraName)
+    eel.open_camera_live_view(cameraName)
 }
 
 async function startCamera(cameraName) {
@@ -267,11 +361,14 @@ async function startCamera(cameraName) {
 
         buttons = document.getElementById('during-recording-' + cameraName)
         buttons.style.visibility = 'visible';
+
     } else {
         document.getElementById('error-message').innerText = cameraName + ' is already being recorded.'
         let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
         errorModal.show()
     }
+
+    updateStatusModalIcon();
 }
 
 async function stopCamera(cameraName) {
@@ -288,24 +385,26 @@ async function stopCamera(cameraName) {
         let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
         errorModal.show()
     }
+
+    updateStatusModalIcon();
 }
 
-function recordAll() {
-    eel.camera_names(read('cameras'))(function (names) {
-        for (i = 0; i < names.length; i++) {
-            startCamera(names[i])
-        }
-    })
+async function startAllCameras() {
+    let cameras = await eel.get_camera_list()();
+
+    const promises = cameras.map(([cameraName, _]) => startCamera(cameraName));
+    await Promise.all(promises);
+
+    await updateCamButtons()
 }
 
-function stopAll() {
+async function stopAllCameras() {
+    let cameras = await eel.get_camera_list()();
 
-    eel.camera_names(read('cameras'))(function (names) {
-        for (i = 0; i < names.length; i++) {
-            stopCamera(names[i])
-        }
-    })
+    const promises = cameras.map(([cameraName, _]) => stopCamera(cameraName));
+    await Promise.all(promises);
 
+    await updateCamButtons()
 }
 
 loadCameras();
@@ -326,6 +425,7 @@ window.setInterval(function () {
     eel.get_progress_update()
 }, 1000)
 
+/* TODO: Rewrite the inference loading bar. */
 eel.expose(inferLoadBar);
 function inferLoadBar(progresses) {
 
