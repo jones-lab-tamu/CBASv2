@@ -10,6 +10,7 @@ from sys import exit
 import subprocess
 import shutil
 import cairo
+import ffmpeg
 
 import cv2
 
@@ -33,8 +34,6 @@ from decord import cpu, gpu
 
 from cmap import Colormap
 
-import queue
-
 import numpy as np
 import pandas as pd
 
@@ -43,6 +42,8 @@ import ctypes
 import threading
 
 from classifier_head import classifier
+
+
 
 def remove_leading_zeros(num):
     for i in range(0,len(num)):
@@ -618,8 +619,6 @@ label_index = -1
 label = -1
 start = -1
 
-task_queue = queue.Queue()
-
 instance_stack = None
 
 gpu_lock = threading.Lock()
@@ -636,13 +635,11 @@ class inference_thread(threading.Thread):
     def run(self):
         global stop_threads
         global progresses
-        global task_queue
         global gpu_lock
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.enc = encoder(self.device).to(self.device)
 
         while True:
+
             progresses = []
             if recordings!='':
                 videos = []
@@ -676,6 +673,9 @@ class inference_thread(threading.Thread):
                 for iv, v in enumerate(videos):
                     with gpu_lock:
 
+                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                        enc = encoder(device).to(device)
+
                         try:
                             cap = cv2.VideoCapture(v)
 
@@ -685,44 +685,31 @@ class inference_thread(threading.Thread):
                                 time.sleep(5)
                                 continue
 
-                            file_path = os.path.splitext(v)[0]+'_cls.h5'
-                            print(f"encoding video '{v}' -> '{file_path}'")
-
                             vr = VideoReader(v, ctx=cpu(0))
 
                             frames = vr.get_batch(range(0, len(vr), 1)).asnumpy()
 
                             frames = torch.from_numpy(frames[:, :, :, 1]/255).half()
 
-                            batch_size = 256
+                            batch_size = 1024
 
-                            with torch.no_grad():
-                                clss = []
+                            clss = []
 
-                                for i in range(0, len(frames), batch_size):
-                                    batch = frames[i:i+batch_size]
+                            for i in range(0, len(frames), batch_size):
+                                batch = frames[i:i+batch_size]
 
-                                    progresses[iv] = (i)/len(frames)*m
+                                progresses[iv] = (i)/len(frames)*m
 
-                                    with torch.no_grad() and autocast():
-                                        out = self.enc(batch.unsqueeze(1).to(self.device))
+                                with torch.no_grad() and autocast():
+                                    out = enc(batch.unsqueeze(1).to(device))
 
-                                    batch = batch.to('cpu')
+                                out = out.squeeze(1).to('cpu')
+                                clss.extend(out)
 
-                                    out = out.squeeze(1).to('cpu')
-                                    clss.extend(out)
-
+                            file_path = os.path.splitext(v)[0]+'_cls.h5'
 
                             with h5py.File(file_path, 'w') as file:
                                 file.create_dataset('cls', data=torch.stack(clss).numpy())
-                            
-                            clss = None
-                            batch = None
-                            frames = None
-                            vr = None
-                            out = None
-
-                            torch.cuda.empty_cache()
 
                             progresses[iv] = m
 
@@ -933,6 +920,8 @@ class classification_thread(threading.Thread):
 
         while True:
 
+
+
             time.sleep(1)
 
             with gpu_lock:
@@ -990,12 +979,8 @@ class classification_thread(threading.Thread):
 
 
                 for clsfile in valid_videos:
-                    outputfile = clsfile.replace('_cls.h5', '_' + dataset_name + '_outputs.csv')
 
-                    if os.path.isfile(outputfile):
-                        continue
-
-                    print(f"classifying '{clsfile}' -> '{outputfile}'")
+                    outputfile = clsfile.replace('_cls.h5', '_'+dataset_name+'_outputs.csv')
 
                     with h5py.File(clsfile, 'r') as file:
                         cls = np.array(file['cls'][:])
@@ -1021,7 +1006,9 @@ class classification_thread(threading.Thread):
 
                             with torch.no_grad() and autocast():
 
-                                logits = model.forward_nodrop(batch.to(device))
+                                lstm_logits, linear_logits = model.forward_nodrop(batch.to(device))
+
+                                logits = lstm_logits + linear_logits
 
                                 probs = torch.softmax(logits, dim=1)
 
@@ -1046,8 +1033,6 @@ class classification_thread(threading.Thread):
 
                     dataframe.to_csv(outputfile)
 
-                    torch.cuda.empty_cache()
-
 
 
 
@@ -1068,9 +1053,79 @@ class classification_thread(threading.Thread):
             ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
             print('Exception raise failure')
 
+
+class live_monitor_thread(threading.Thread):
+    def __init__(self, image_width, image_height, fps):
+        threading.Thread.__init__(self)
+
+        self.fps = fps
+        self.image_width = image_width
+        self.image_height = image_height
+        self.frame_size = self.image_width * self.image_height * 3
+
+    def run(self):
+        global live_monitor_cameras
+
+        for camera in live_monitor_cameras:
+            url = live_monitor_cameras[camera]['url']
+
+            proc = (
+                ffmpeg
+                .input(url, rtsp_transport='tcp')
+                .filter('fps', fps=self.fps)
+                .filter('scale', self.image_width, self.image_height)
+                .output('pipe:', format='rawvideo', pix_fmt='bgr24')
+                .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True, overwrite_output=True)
+            )
+
+            live_monitor_cameras[camera]['proc'] = proc
+            
+        while True:
+            for camera in live_monitor_cameras:
+                if not 'enabled' in live_monitor_cameras[camera] or not live_monitor_cameras[camera]['enabled']:
+                    continue
+
+                proc = live_monitor_cameras[camera]['proc']
+
+                raw_frame = proc.stdout.read(self.frame_size)
+                if len(raw_frame) == self.frame_size:
+                    latest_frame = np.frombuffer(raw_frame, np.uint8).reshape((self.image_height, self.image_width, 3))
+                else:
+                    latest_frame = None
+
+                live_monitor_cameras[camera]['latest_frame'] = latest_frame
+
+    def get_id(self):
+        # returns id of the respective thread
+        if hasattr(self, '_thread_id'):
+            return self._thread_id
+        for id, thread in threading._active.items():
+            if thread is self:
+                return id
+
+    def raise_exception(self):
+        thread_id = self.get_id()
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id,
+              ctypes.py_object(SystemExit))
+        if res > 1:
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+            print('Exception raise failure')
+
 thread = inference_thread('inference')
 
 tthread = None
+
+# Live video monitor config stuff.  It is pretty arbitrary right now.
+live_image_width = 320
+live_image_height = 240
+live_fps = 20
+
+# Camera information needed for live monitoring
+live_monitor_cameras = {}
+
+# The thread that queries ffmpeg for the latest images.
+monitor_thread = None
+
 
 def tab20_map(val):
 
@@ -1461,6 +1516,52 @@ def start_classification(datasets, dataset, whitelist):
 
             classification_threads.append(cthread)
 
+@eel.expose
+def setup_live_cameras(camera_directory):
+    global live_monitor_cameras
+    global monitor_thread
+
+    for camera in os.listdir(camera_directory):
+        if os.path.isdir(os.path.join(camera_directory, camera)):
+            if camera not in live_monitor_cameras:
+                live_monitor_cameras[camera] = {}
+
+    for camera in os.listdir(camera_directory):
+        if os.path.isdir(os.path.join(camera_directory, camera)):
+
+            config = os.path.join(camera_directory, camera, 'config.yaml')
+
+            with open(config, 'r') as file:
+                cconfig = yaml.safe_load(file)
+
+            url = cconfig['rtsp_url']
+
+            live_monitor_cameras[camera]['url'] = url
+            live_monitor_cameras[camera]['latest_frame'] = None
+            live_monitor_cameras[camera]['enabled'] = cconfig['live_monitor']
+
+    monitor_thread = live_monitor_thread(live_image_width, live_image_height, live_fps)
+    monitor_thread.start()
+
+@eel.expose
+def update_live_cameras():
+    global live_monitor_cameras
+
+    for camera in live_monitor_cameras:
+        cam = live_monitor_cameras[camera]
+
+        if cam['latest_frame'] is None or not cam['enabled']:
+            continue
+
+        latest_frame = cam['latest_frame']
+        _, frame = cv2.imencode('.jpg', latest_frame)
+
+        frame = frame.tobytes()
+
+        blob = base64.b64encode(frame)
+        blob = blob.decode("utf-8")
+
+        eel.updateImageSrc(camera, blob)()
 
 @eel.expose
 def ping_cameras(camera_directory):
@@ -1469,9 +1570,6 @@ def ping_cameras(camera_directory):
 
     for camera in os.listdir(camera_directory):
         if os.path.isdir(os.path.join(camera_directory, camera)):
-            if camera in active_streams.keys():
-                continue
-
             config = os.path.join(camera_directory, camera, 'config.yaml')
 
             with open(config, 'r') as file:
@@ -1488,7 +1586,7 @@ def ping_cameras(camera_directory):
             if os.path.exists(frame_location):
                 os.remove(frame_location)
 
-            command = f"ffmpeg -loglevel panic -rtsp_transport tcp -i {rtsp_url} -vf \"select=eq(n\,34)\" -vframes 1 -y \"{frame_location}\""
+            command = f"ffmpeg -loglevel panic -rtsp_transport tcp -i {rtsp_url} -vf \"select=eq(n\,34)\" -vframes 1 -y {frame_location}"
 
             subprocess.Popen(command, shell=True)
 
@@ -1500,7 +1598,6 @@ def ping_cameras(camera_directory):
 
 @eel.expose
 def update_camera_frames(camera_directory):
-
     for camera in os.listdir(camera_directory):
         if os.path.isdir(os.path.join(camera_directory, camera)):
 
@@ -1530,7 +1627,7 @@ def camera_names(camera_directory):
     return names
 
 @eel.expose
-def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1):
+def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1, live_monitor=True):
 
     # set up a folder for the camera
     camera = os.path.join(camera_directory, name)
@@ -1547,7 +1644,8 @@ def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
         'crop_left_x':crop_left_x,
         'crop_top_y':crop_top_y,
         'crop_width':crop_width,
-        'crop_height':crop_height
+        'crop_height':crop_height,
+        'live_monitor':live_monitor,
     }
 
     # save the camera config
@@ -1557,7 +1655,7 @@ def create_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
     return True, name, camera_config
 
 @eel.expose
-def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1):
+def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256, crop_left_x=0, crop_top_y=0, crop_width=1, crop_height=1, live_monitor=True):
 
     # set up a folder for the camera
     camera = os.path.join(camera_directory, name)
@@ -1583,6 +1681,9 @@ def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
             cconfig['crop_top_y'] = crop_top_y
             cconfig['crop_width'] = crop_width
             cconfig['crop_height'] = crop_height
+            cconfig['live_monitor'] = live_monitor
+
+            live_monitor_cameras[name]['enabled'] = live_monitor
 
             # save the camera config
             with open(camera_config, 'w+') as file:
@@ -1590,11 +1691,11 @@ def update_camera(camera_directory, name, rtsp_url, framerate=10, resolution=256
         else:
             # remove the camera directory and start fresh
             shutil.rmtree(camera)
-            create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height)
+            create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height, live_monitor)
 
     else:
         # must be a new camera
-        create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height)
+        create_camera(camera_directory, name, rtsp_url, framerate, resolution, crop_left_x, crop_top_y, crop_width, crop_height, live_monitor)
 
 @eel.expose
 def test_camera(camera_directory, name, rtsp_url):
@@ -1716,6 +1817,39 @@ def get_record_tree():
     return rt
 
 @eel.expose
+def delete_instance():
+    global instance_stack
+    global label_dict
+    global label_index
+
+    beh = None
+    ind = None
+
+
+    for b in label_dict['behaviors']:
+        if beh != None or ind != None:
+            break
+
+        for i,inst in enumerate(label_dict['labels'][b]):
+            if inst['start'] <= label_index <= inst['end']:
+                beh = b
+                ind = i
+                break
+
+    if beh==None or ind==None:
+        return
+    else:
+        del label_dict['labels'][beh][ind]
+
+    # save the label dictionary
+    with open(label_dict_path, 'w+') as file:
+        yaml.dump(label_dict, file, allow_unicode=True)
+
+    update_counts()
+
+    render_image()
+
+@eel.expose
 def pop_instance():
 
     global instance_stack
@@ -1742,7 +1876,7 @@ def pop_instance():
 
     update_counts()
 
-    nextFrame(0)
+    render_image()
 
 
 @eel.expose
@@ -1769,6 +1903,53 @@ def label_frame(value):
         label = -1
         raise Exception('Label does not match that that was started.')
 
+def render_image():
+    global label_capture
+    global label_videos
+    global label_vid_index
+    global label_index
+    global label
+    global start
+
+    amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+
+    label_capture.set(cv2.CAP_PROP_POS_FRAMES, label_index)
+
+    ret, frame = label_capture.read()
+
+    if ret:
+        frame = cv2.resize(frame, (500, 500))
+
+        temp = np.zeros((frame.shape[0]+50, frame.shape[1], frame.shape[2]))
+
+        temp[:-50,:,:] = frame
+
+        temp[-50,:,:] = 0
+
+        temp[-49:,:,:] = 100
+
+        temp = fill_colors(temp)
+
+        marker_pos = int(frame.shape[1] * label_index/amount_of_frames)
+
+        if marker_pos!=0 and marker_pos!=frame.shape[1]-1:
+            temp[-45:-5, marker_pos-1:marker_pos+2, :] = 255
+        else:
+            if marker_pos==0:
+                temp[-45:-5, marker_pos:marker_pos+2, :] = 255
+            else:
+                temp[-45:-5, marker_pos-1:marker_pos+1, :] = 255
+
+
+        ret, frame = cv2.imencode('.jpg', temp)
+
+        frame = frame.tobytes()
+
+        blob = base64.b64encode(frame)
+        blob = blob.decode("utf-8")
+
+        eel.updateLabelImageSrc(blob)()
+
 @eel.expose
 def nextFrame(shift):
     global label_capture
@@ -1782,51 +1963,22 @@ def nextFrame(shift):
         shift-=1
 
     if label_capture.isOpened():
-
         amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
 
         label_index+=shift
         label_index%=amount_of_frames
 
+        render_image()
 
+@eel.expose
+def handle_click_on_label_image(x, y):
+    global label_capture
+    global label_index
 
-        label_capture.set(cv2.CAP_PROP_POS_FRAMES, label_index)
+    amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    label_index = int(x * amount_of_frames / 500)
 
-        ret, frame = label_capture.read()
-
-        if ret:
-
-            frame = cv2.resize(frame, (500, 500))
-
-            temp = np.zeros((frame.shape[0]+50, frame.shape[1], frame.shape[2]))
-
-            temp[:-50,:,:] = frame
-
-            temp[-50,:,:] = 0
-
-            temp[-49:,:,:] = 100
-
-            temp = fill_colors(temp)
-
-            marker_pos = int(frame.shape[1] * label_index/amount_of_frames)
-
-            if marker_pos!=0 and marker_pos!=frame.shape[1]-1:
-                temp[-45:-5, marker_pos-1:marker_pos+2, :] = 255
-            else:
-                if marker_pos==0:
-                    temp[-45:-5, marker_pos:marker_pos+2, :] = 255
-                else:
-                    temp[-45:-5, marker_pos-1:marker_pos+1, :] = 255
-
-
-            ret, frame = cv2.imencode('.jpg', temp)
-
-            frame = frame.tobytes()
-
-            blob = base64.b64encode(frame)
-            blob = blob.decode("utf-8")
-
-            eel.updateLabelImageSrc(blob)()
+    render_image()
 
 @eel.expose
 def nextVideo(shift):
@@ -2008,6 +2160,10 @@ def kill_streams():
     stop_threads = True
     thread.raise_exception()
     thread.join()
+
+    if monitor_thread:
+        monitor_thread.raise_exception()
+        monitor_thread.join()
 
     if tthread:
         tthread.raise_exception()
