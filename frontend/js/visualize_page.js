@@ -45,10 +45,24 @@ window.onbeforeunload = function (){
 
 eel.expose(updateActogram);
 function updateActogram(val) {
+    showProgressBar(); // 3.4, showing progress bar
+
+
     let elem = document.getElementById('actogram-image');
     elem.src = "data:image/jpeg;base64, " + val
 
     elem.style.display="block"
+
+    let percentage = 0; // 3.4, simulates progress as image loads
+    let interval = setInterval(function() {
+        percentage += 10;
+        updateProgressBar(percentage);
+        
+        if (percentage >= 100) {
+            clearInterval(interval);
+            hideProgressBar();
+        }
+    }, 500);  // Updates every 500ms (good enough speed?)
 }
 
 function toggleVis(id) {
@@ -179,4 +193,21 @@ setTimeout(function (){
     }, 1000)
 }, 500)
 
-    
+// 3.4, kloie messing around and adding progress bar functions... WIP
+function updateProgressBar(percentage) {
+    let progressBar = document.getElementById('progress-bar');
+    progressBar.style.width = percentage + "%";
+    progressBar.setAttribute('aria-valuenow', percentage);
+    progressBar.textContent = percentage + "%";
+}
+
+function showProgressBar() {
+    let progressContainer = document.getElementById('progress-container');
+    progressContainer.style.display = "block";  // Show progress bar
+    updateProgressBar(0);  // Reset the progress bar to 0%
+}
+
+function hideProgressBar() {
+    let progressContainer = document.getElementById('progress-container');
+    progressContainer.style.display = "none";  // Hide progress bar when done
+}
