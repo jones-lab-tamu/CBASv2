@@ -45,24 +45,38 @@ window.onbeforeunload = function (){
 
 eel.expose(updateActogram);
 function updateActogram(val) {
-    showProgressBar(); // 3.4, showing progress bar
-
+    // showProgressBar(); // 3.4, showing progress bar, 3.5 commented until load details are right
+    showBuffering(); //3.5, buffering signal load
 
     let elem = document.getElementById('actogram-image');
     elem.src = "data:image/jpeg;base64, " + val
 
     elem.style.display="block"
 
-    let percentage = 0; // 3.4, simulates progress as image loads
-    let interval = setInterval(function() {
-        percentage += 10;
-        updateProgressBar(percentage);
+    hideBuffering(); //3.5, buffering signal hide
+
+    //3.5 commented until load details are right
+    // let percentage = 0; // 3.4, simulates progress as image loads
+    // let interval = setInterval(function() {
+    //     percentage += 10;
+    //     updateProgressBar(percentage);
         
-        if (percentage >= 100) {
-            clearInterval(interval);
-            hideProgressBar();
-        }
-    }, 500);  // Updates every 500ms (good enough speed?)
+    //     if (percentage >= 100) {
+    //         clearInterval(interval);
+    //         hideProgressBar();
+    //     }
+    // }, 500);  // Updates every 500ms (good enough speed?) NO, working on proper loading equation
+
+}
+
+// added 3.5, in place of load bar, buffering funcs, for now...
+function showBuffering() {
+    let spinner = document.getElementById('loading-spinner');
+    spinner.style.display = "block";
+}
+function hideBuffering() {
+    let spinner = document.getElementById('loading-spinner');
+    spinner.style.display = "none";
 }
 
 function toggleVis(id) {
@@ -88,6 +102,7 @@ function setValues(rd, sd, md, beh) {
     let titleElem = document.getElementById('actogram-title') // added 2/23, acto title
     titleElem.textContent = "Actogram for " + md + " - " + beh // added 2/23 ^^
 
+    showBuffering(); // added 3.5, buffering siganl
     eel.make_actogram(rd, sd, md, beh, fr, bs, st, col, th, norm, lc)
 }
 
@@ -194,20 +209,21 @@ setTimeout(function (){
 }, 500)
 
 // 3.4, kloie messing around and adding progress bar functions... WIP
-function updateProgressBar(percentage) {
-    let progressBar = document.getElementById('progress-bar');
-    progressBar.style.width = percentage + "%";
-    progressBar.setAttribute('aria-valuenow', percentage);
-    progressBar.textContent = percentage + "%";
-}
+// commented out until the progress loading details are fixed 3.5
+// function updateProgressBar(percentage) {
+//     let progressBar = document.getElementById('progress-bar');
+//     progressBar.style.width = percentage + "%";
+//     progressBar.setAttribute('aria-valuenow', percentage);
+//     progressBar.textContent = percentage + "%";
+// }
 
-function showProgressBar() {
-    let progressContainer = document.getElementById('progress-container');
-    progressContainer.style.display = "block";  // Show progress bar
-    updateProgressBar(0);  // Reset the progress bar to 0%
-}
+// function showProgressBar() {
+//     let progressContainer = document.getElementById('progress-container');
+//     progressContainer.style.display = "block";  // Show progress bar
+//     updateProgressBar(0);  // Reset the progress bar to 0%
+// }
 
-function hideProgressBar() {
-    let progressContainer = document.getElementById('progress-container');
-    progressContainer.style.display = "none";  // Hide progress bar when done
-}
+// function hideProgressBar() {
+//     let progressContainer = document.getElementById('progress-container');
+//     progressContainer.style.display = "none";  // Hide progress bar when done
+// }
