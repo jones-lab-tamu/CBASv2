@@ -8,6 +8,12 @@ import torch
 import cbas
 import yaml
 
+import matplotlib
+matplotlib.use("Agg")  # Set the backend to non-GUI mode
+
+import matplotlib.pyplot as plt
+from sklearn.metrics import ConfusionMatrixDisplay
+
 import classifier_head
 
 from watchdog.observers import Observer
@@ -140,10 +146,41 @@ class TrainingTask():
         self.epochs = epochs
         self.sequence_length = sequence_length
         self.behaviors = behaviors
+    
+
+def save_confusion_matrix_plot(confusion_matrix, path):
+    disp = ConfusionMatrixDisplay(confusion_matrix)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    disp.plot(ax=ax, cmap="Blues", colorbar=False)
+
+    plt.savefig(path)
+    plt.close(fig)
+
+def plot_report_list_metric(report_list, metric, behaviors, path):
+    n_epochs = len(report_list)
+    epochs = list(range(1, n_epochs + 1))
+
+    plt.figure(figsize=(8, 6))
+
+    for behavior in behaviors:
+        data = [report.sklearn_report[behavior][metric] for report in report_list]
+        plt.plot(epochs, data, marker='o', linestyle='-', label=behavior)
+
+    plt.xlabel("Epochs")
+    plt.ylabel(metric.capitalize())
+    plt.title(f"{metric.capitalize()} Over Epochs")
+    plt.legend(title="Behaviors")
+    plt.grid(True)
+
+    os.makedirs(path, exist_ok=True)
+
+    filename = os.path.join(path, f"{metric}-report.png")
+    plt.savefig(filename, bbox_inches="tight", dpi=300)
+    plt.close()
 
 class TrainingThread(threading.Thread):
     def __init__(self, device):
-#        self, name, config, dataset, batch_size, learning_rate, epochs, sequence_length):
         threading.Thread.__init__(self)
 
         self.device = device
@@ -168,19 +205,44 @@ class TrainingThread(threading.Thread):
                     model_path = os.path.join(model_dir, "model.pth")
                     model_config_path = os.path.join(model_dir, "config.yaml")
 
-                    model = cbas.train_lstm_model(train_ds, test_ds, task.sequence_length, train_ds.behaviors, lr=task.learning_rate, batch_size=task.batch_size, epochs=task.epochs, device=self.device)
+                    model, report_list, best_epoch = cbas.train_lstm_model(train_ds, test_ds, task.sequence_length, train_ds.behaviors, lr=task.learning_rate, batch_size=task.batch_size, epochs=task.epochs, device=self.device)
+
+                    best_report = report_list[best_epoch]
+
+                    report_dict = best_report.sklearn_report
 
                     if not os.path.exists(model_dir):
                         os.mkdir(model_dir)
 
                     torch.save(model.state_dict(), model_path)
 
-                    task.dataset.config["model"] = model_path
-
                     with open(task.dataset.config_path, "w+") as file:
                         yaml.dump(task.dataset.config, file, allow_unicode=True)
 
+                    behaviors = task.dataset.config["behaviors"]
+
+                    for b in behaviors:
+                        task.dataset.update_metric(b, "F1 Score", round(report_dict[b]["f1-score"], 2))
+                        task.dataset.update_metric(b, "Recall", round(report_dict[b]["recall"], 2))
+                        task.dataset.update_metric(b, "Precision", round(report_dict[b]["precision"], 2))
+
                     model_config = {"seq_len": task.sequence_length, "behaviors": task.behaviors}
+
+                    performance_path = os.path.join(task.dataset.path, "performance.yaml")
+                    with open(performance_path, 'w+') as file:
+                        yaml.dump(best_report.sklearn_report, file, allow_unicode=True)
+
+                    save_confusion_matrix_plot(best_report.confusion_matrix, os.path.join(task.dataset.path, "confusion_matrix.png"))
+
+                    if not os.path.exists(os.path.join(task.dataset.path, "confusion_matrices")):
+                        os.mkdir(os.path.join(task.dataset.path, "confusion_matrices"))
+
+                    for i, report in enumerate(report_list):
+                        save_confusion_matrix_plot(report.confusion_matrix, os.path.join(task.dataset.path, "confusion_matrices", f"epoch_{i}.png"))
+
+                    plot_report_list_metric(report_list, "f1-score", behaviors, task.dataset.path)
+                    plot_report_list_metric(report_list, "recall", behaviors, task.dataset.path)
+                    plot_report_list_metric(report_list, "precision", behaviors, task.dataset.path)
 
                     with open(model_config_path, "w+") as file:
                         yaml.dump(model_config, file, allow_unicode=True)
