@@ -6,6 +6,8 @@ import cairo
 import base64
 import math
 
+from sklearn.metrics import classification_report, confusion_matrix
+
 import shutil
 
 import cv2
@@ -403,6 +405,15 @@ class Dataset:
 
         with open(self.labels_path) as file:
             self.labels = yaml.safe_load(file)
+
+    def update_metric(self, behavior, group, value):
+        with open(self.config_path, "r") as file:
+            config = yaml.safe_load(file)
+
+        config["metrics"][behavior][group] = value
+
+        with open(self.config_path, "w+") as file:
+            yaml.dump(config, file, allow_unicode=True)
 
 def remove_leading_zeros(num):
     for i in range(0, len(num)):
@@ -1089,6 +1100,10 @@ def off_diagonal(x):
     assert n == m
     return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
+class PerformanceReport:
+    def __init__(self, sklearn_report, confusion_matrix):
+        self.sklearn_report = sklearn_report
+        self.confusion_matrix = confusion_matrix
 
 def train_lstm_model(
     train_set,
@@ -1109,46 +1124,83 @@ def train_lstm_model(
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    best_f1 = 0 
+    best_report = None
+    best_epoch = 0
+    best_model = None
+    best_report_list = None
 
-    model = classifier_head.classifier(
-        in_features=768, out_features=len(behaviors), seq_len=seq_len
-    ).to(device)
+    for _ in range(1):
+        model = classifier_head.classifier(
+            in_features=768, out_features=len(behaviors), seq_len=seq_len
+        ).to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+        optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    criterion = nn.CrossEntropyLoss()
-    for e in range(epochs):
-        for t, param_group in enumerate(optimizer.param_groups):
-            param_group["lr"] = (epochs - e) / epochs * 0.0005 + (e / epochs) * 0.00001
+        criterion = nn.CrossEntropyLoss()
 
-        for i, (d, l) in enumerate(train_loader):
+        reports = []
 
-            d = d.to(device).float()
-            l = l.to(device)
+        for e in range(epochs):
+            for t, param_group in enumerate(optimizer.param_groups):
+                param_group["lr"] = (epochs - e) / epochs * 0.0005 + (e / epochs) * 0.00001
 
-            optimizer.zero_grad()
+            for i, (d, l) in enumerate(train_loader):
 
-            B = d.shape[0]
+                d = d.to(device).float()
+                l = l.to(device)
 
-            lstm_logits, linear_logits, rawm = model(d)
+                optimizer.zero_grad()
 
-            logits = lstm_logits + linear_logits
+                B = d.shape[0]
 
-            inv_loss = criterion(logits, l)
+                lstm_logits, linear_logits, rawm = model(d)
 
-            rawm = rawm - rawm.mean(dim=0)
+                logits = lstm_logits + linear_logits
 
-            covm = (rawm @ rawm.T) / rawm.shape[0]
-            covm_loss = torch.sum(torch.pow(off_diagonal(covm), 2)) / rawm.shape[1]
+                inv_loss = criterion(logits, l)
 
-            loss = inv_loss + covm_loss
+                rawm = rawm - rawm.mean(dim=0)
 
-            loss.backward()
-            optimizer.step()
+                covm = (rawm @ rawm.T) / rawm.shape[0]
+                covm_loss = torch.sum(torch.pow(off_diagonal(covm), 2)) / rawm.shape[1]
 
-            print(f"Epoch: {e} Batch: {i} Total Loss: {loss.item()}")
+                loss = inv_loss + covm_loss
 
-    return model
+                loss.backward()
+                optimizer.step()
+
+                print(f"Epoch: {e} Batch: {i} Total Loss: {loss.item()}")
+            
+            actuals = []
+            predictions = []
+            
+            for i, (d, l) in enumerate(test_loader):
+                d = d.to(device).float()
+                l = l.to(device)
+
+                with torch.no_grad():
+                    logits = model.forward_nodrop(d)
+
+                actuals.extend(l.cpu().numpy())
+                predictions.extend(logits.argmax(1).cpu().numpy())
+
+            report_dict = classification_report(actuals, predictions, target_names=behaviors, output_dict=True)
+
+            wf1score = report_dict['weighted avg']['f1-score']
+
+            full_report = PerformanceReport(report_dict, confusion_matrix(actuals, predictions))
+            reports.append(full_report)
+
+            if best_f1 < wf1score:
+                best_f1 = wf1score
+                best_report = full_report
+                best_report_list = reports
+                best_epoch = e
+                best_model = model
+                
+    return best_model, best_report_list, best_epoch
 
 """
 # Library usage
@@ -1170,7 +1222,7 @@ print(cam)
 
 #train_ds1, test_ds1 = proj.load_dataset('ds1')
 
-#model = train_lstm_model(train_ds1, test_ds1, 15, train_ds1.behaviors)
+#model, report= train_lstm_model(train_ds1, test_ds1, 15, train_ds1.behaviors)
 """
 
 # encoder = DinoEncoder()

@@ -39,6 +39,7 @@ function routeVisualize() {
 function handleMouseMove(event) {
     let x = event.offsetX;
     let y = event.offsetY;
+    console.log(x, y);
     eel.handle_click_on_label_image(x, y)
 }
 
@@ -55,8 +56,8 @@ document.getElementById('label-image').addEventListener('mousedown', function (e
     if (y > 500) {
         eel.handle_click_on_label_image(x, y)
 
-        document.addEventListener('mousemove', handle_mousemove);
-        document.addEventListener('mouseup', handle_mouseup);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
     }
 });
 
@@ -184,6 +185,12 @@ function updateLabelImageSrc(val) {
     elem.src = "data:image/jpeg;base64, " + val
 }
 
+eel.expose(updateFileInfo);
+function updateFileInfo(filename) {
+    let elem = document.getElementById('file-info');
+    elem.innerText = filename
+}
+
 eel.expose(updateMetrics);
 function updateMetrics(dataset, behavior, group, value) {
     let elem = document.getElementById(dataset + '-' + behavior + '-' + group);
@@ -191,10 +198,10 @@ function updateMetrics(dataset, behavior, group, value) {
 }
 
 eel.expose(updateCount);
-function updateCount(behavior, value) {
+function updateCount(behavior, inst_count, frame_count) {
     let elem = document.getElementById('controls-' + behavior + '-count');
     if (elem != null) {
-        elem.innerHTML = value
+        elem.innerHTML = inst_count.toString() + "/" + frame_count.toString()
     }
 }
 
@@ -227,6 +234,7 @@ async function labelModal(name) {
 
         behaviors = res[0]
         colors = res[1]
+        file_info = res[2]
 
         controls.innerHTML += `
                         <div class="row">
@@ -274,11 +282,7 @@ async function labelModal(name) {
         errorModal.show()
     }
 
-    /*
-    setTimeout(function () {
-    eel.update_counts()()
-    }, 1000)
-    */
+    await eel.update_counts()()
 }
 
 async function createDataset() {

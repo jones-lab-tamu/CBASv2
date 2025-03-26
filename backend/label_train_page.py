@@ -82,7 +82,6 @@ def start_labeling(name):
     gui_state.label_index = -1
     gui_state.label_videos = []
     gui_state.label_vid_index = -1
-    gui_state.label_index = -1
     gui_state.label_type = -1
     gui_state.label_start = -1
     gui_state.label_history = []
@@ -138,14 +137,15 @@ def start_labeling(name):
     # Set the video to be the first.
     next_video(1)
 
+    update_counts()
+
     return dataset.labels["behaviors"], [
         str(gui_state.label_col_map(tab20_map(i))) for i in range(len(dataset.labels["behaviors"]))
     ]
 
+
 @eel.expose
 def label_frame(value):
-    print(value)
-
     behaviors = gui_state.label_dataset.labels["behaviors"]
 
     beh = None
@@ -178,7 +178,6 @@ def label_frame(value):
 
         del gui_state.label_dataset.labels["labels"][beh][ind]
 
-        print(gui_state.label_dataset.labels)
         # save the label dictionary
         with open(gui_state.label_dataset.labels_path, "w+") as file:
             yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
@@ -242,29 +241,26 @@ def add_instance():
     with open(gui_state.label_dataset.labels_path, "w+") as file:
         yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
 
-    update_counts()
-
 @eel.expose
 def update_counts():
     config_path = os.path.join(os.path.split(gui_state.label_dataset.labels_path)[0], "config.yaml")
 
     for b in gui_state.label_dataset.labels["behaviors"]:
+        total_frames = 0
         insts = gui_state.label_dataset.labels["labels"][b]
+        for inst in insts:
+            total_frames += inst["end"] - inst["start"]
 
-        update_metrics(config_path, b, "Train #", int(round(len(insts) * 0.75)))
-        update_metrics(config_path, b, "Test #", int(round(len(insts) * 0.25)))
+        gui_state.label_dataset.update_metric(b, "Train #", int(round(len(insts) * 0.75)))
+        gui_state.label_dataset.update_metric(b, "Test #", int(round(len(insts) * 0.25)))
+        gui_state.label_dataset.update_metric(b, "Train Frames", total_frames * 0.75)
+        gui_state.label_dataset.update_metric(b, "Test Frames", total_frames * 0.25)
 
-        eel.updateCount(b, len(insts))()
+        eel.updateCount(b, len(insts), total_frames)()
 
-@eel.expose
-def update_metrics(config_path, behavior, group, value):
-    with open(config_path, "r") as file:
-        config = yaml.safe_load(file)
+    filename = gui_state.label_videos[gui_state.label_vid_index]
 
-    config["metrics"][behavior][group] = value
-
-    with open(config_path, "w+") as file:
-        yaml.dump(config, file, allow_unicode=True)
+    eel.updateFileInfo(os.path.relpath(filename, start=gui_state.proj.path))()
 
 @eel.expose
 def delete_instance():
@@ -463,7 +459,6 @@ def train_model(name, batch_size, learning_rate, epochs, sequence_length):
 
 @eel.expose
 def start_classification(dataset, whitelist):
-    print(gui_state.proj.models[dataset])
     if not gui_state.classify_thread.running:
         gui_state.classify_thread.start_inferring(gui_state.proj.models[dataset], whitelist)
 
