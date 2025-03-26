@@ -55,18 +55,6 @@ function updateActogram(val) {
 
     hideBuffering(); //3.5, buffering signal hide
 
-    //3.5 commented until load details are right
-    // let percentage = 0; // 3.4, simulates progress as image loads
-    // let interval = setInterval(function() {
-    //     percentage += 10;
-    //     updateProgressBar(percentage);
-        
-    //     if (percentage >= 100) {
-    //         clearInterval(interval);
-    //         hideProgressBar();
-    //     }
-    // }, 500);  // Updates every 500ms (good enough speed?) NO, working on proper loading equation
-
 }
 
 // added 3.5, in place of load bar, buffering funcs, for now...
@@ -207,23 +195,3 @@ setTimeout(function (){
         adjustActogram()
     }, 1000)
 }, 500)
-
-// 3.4, kloie messing around and adding progress bar functions... WIP
-// commented out until the progress loading details are fixed 3.5
-// function updateProgressBar(percentage) {
-//     let progressBar = document.getElementById('progress-bar');
-//     progressBar.style.width = percentage + "%";
-//     progressBar.setAttribute('aria-valuenow', percentage);
-//     progressBar.textContent = percentage + "%";
-// }
-
-// function showProgressBar() {
-//     let progressContainer = document.getElementById('progress-container');
-//     progressContainer.style.display = "block";  // Show progress bar
-//     updateProgressBar(0);  // Reset the progress bar to 0%
-// }
-
-// function hideProgressBar() {
-//     let progressContainer = document.getElementById('progress-container');
-//     progressContainer.style.display = "none";  // Hide progress bar when done
-// }
