@@ -784,7 +784,6 @@ class Project:
             for folder in subrecording_folders:
                 rec = Recording(folder)
                 self.recordings[day_str][rec.name] = rec
-            break
 
         # Build out our list of cameras
         self.cameras = {}
