@@ -2,6 +2,7 @@ import os
 import h5py
 
 import time
+import actogram
 import cairo
 import base64
 import math
@@ -515,8 +516,10 @@ class Actogram:
         if len(bins) < 2:
             print("Not enough videos to make an actogram.")
             return
+        """
 
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, self.width, self.height)
+
         ctx = cairo.Context(surface)
 
         width = self.width
@@ -526,11 +529,16 @@ class Actogram:
 
         self.align_draw(ctx)
 
+
+        surface.write_to_png(self.file)
+        """
+
         self.file = os.path.join(
             self.directory, self.model + "-" + self.behavior + "-" + "actogram.png"
         )
 
-        surface.write_to_png(self.file)
+        fig = actogram.actogram(self.clfile.replace(".csv", ".awd"))
+        fig.savefig(self.file)
 
         frame = cv2.imread(self.file)
 
