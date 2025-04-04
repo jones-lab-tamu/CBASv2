@@ -82,7 +82,7 @@
 
 ## 5. Starting CBAS
    1. If finished with Step 4 above
-      1. Type `python backend/app.py`
+      1. Type `python app.py`
       2. Be patient waiting for it to start for the first time!
    2. If starting from a new command prompt
       1. Enter the CBASv2 folder
