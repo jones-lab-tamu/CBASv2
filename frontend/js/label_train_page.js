@@ -469,7 +469,7 @@ async function showInferenceModal(dataset) {
     }
 }
 
-function startClassification() {
+async function startClassification() { // KLOIE CHANGES 4.16.25, buffer, made function async 
     dataset = document.getElementById('im-dataset').innerHTML
 
     let dirs = Object.keys(dir_children)
@@ -501,11 +501,24 @@ function startClassification() {
             }
         }
     }
+    // changes start from here: 4.16 -->
+    // eel.start_classification(dataset, recordings)
 
-    eel.start_classification(dataset, recordings)
+    // show spinner
+    document.getElementById('loading-spinner').classList.remove('d-none');
+    try {
+        await eel.start_classification(dataset, recordings)();
+    } catch (error) {
+        console.error("Inference failed", error);
+    }
+    //hide spinner
+    document.getElementById('loading-spinner').classList.add('d-none');
+    
+    inferenceModal.hide();
+    inferenceModal = new bootstrap.Modal(document.getElementById('inferenceModal'));
 
-    inferenceModal.hide()
-    inferenceModal = new bootstrap.Modal(document.getElementById('inferenceModal'))
+    // inferenceModal.hide()
+    // inferenceModal = new bootstrap.Modal(document.getElementById('inferenceModal'))
 }
 
 
