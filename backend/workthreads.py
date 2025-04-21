@@ -205,7 +205,7 @@ class TrainingThread(threading.Thread):
                     model_path = os.path.join(model_dir, "model.pth")
                     model_config_path = os.path.join(model_dir, "config.yaml")
 
-                    model, report_list, best_epoch = cbas.train_lstm_model(train_ds, test_ds, task.sequence_length, train_ds.behaviors, lr=task.learning_rate, batch_size=task.batch_size, epochs=task.epochs, device=self.device)
+                    model, report_list, best_epoch = cbas.train_lstm_model(train_ds, test_ds, task.sequence_length, task.behaviors, lr=task.learning_rate, batch_size=task.batch_size, epochs=task.epochs, device=self.device)
 
                     best_report = report_list[best_epoch]
 

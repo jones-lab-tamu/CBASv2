@@ -454,7 +454,7 @@ def create_dataset(name, behaviors, recordings):
 def train_model(name, batch_size, learning_rate, epochs, sequence_length):
     dataset = gui_state.proj.datasets[name]
 
-    task = workthreads.TrainingTask(name, dataset, dataset.labels, int(batch_size), float(learning_rate), int(epochs), int(sequence_length))
+    task = workthreads.TrainingTask(name, dataset, dataset.config['behaviors'], int(batch_size), float(learning_rate), int(epochs), int(sequence_length))
     gui_state.training_thread.queue_task(task)
 
 @eel.expose

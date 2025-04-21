@@ -709,9 +709,10 @@ class Actogram:
 
         split_files.sort(key=lambda vf: vf[1])
 
+        first_num = split_files[0][1]
         last_num = split_files[-1][1]
 
-        if len(split_files) != last_num + 1:
+        if len(split_files) != (last_num - first_num) + 1:
 
             prev_num = -1
             for vf, num in split_files:
@@ -784,7 +785,6 @@ class Project:
             for folder in subrecording_folders:
                 rec = Recording(folder)
                 self.recordings[day_str][rec.name] = rec
-            break
 
         # Build out our list of cameras
         self.cameras = {}
