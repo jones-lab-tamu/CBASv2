@@ -89,7 +89,7 @@
          1. Example: type `cd C:\Users\Jones-Lab\Documents\CBASv2`
       2. Type `dir`
       3. Type `.\venv\Scripts\activate`
-      4. Type `python app.py`
+      4. Type `python backend/app.py`
    
 ## 6. Automatically updating CBAS (when needed)
    1. In command prompt, enter the CBASv2 folder
