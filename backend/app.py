@@ -2,6 +2,7 @@ import eel
 import time
 import ctypes
 import yaml
+import socket
 import os
 import math
 import sys
@@ -82,103 +83,21 @@ actogram = None
 
 tthread = None
 
+sock = socket.socket()
+sock.bind(('', 0))
+port = sock.getsockname()[1]
+sock.close()
 
-def tab20_map(val):
-
-    if val < 10:
-        return val * 2
-    else:
-        return (val - 10) * 2 + 1
-
-
-def fill_colors(frame):
-    global label_videos
-    global label_vid_index
-    global label_capture
-    global label
-    global label_index
-    global start
-
-    global label_dict
-    global col_map
-
-    behaviors = label_dict["behaviors"]
-
-    labels = label_dict["labels"]
-
-    cur_video = label_videos[label_vid_index]
-    amount_of_frames = label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-
-    for i, b in enumerate(behaviors):
-
-        sub_labels = labels[b]
-
-        color = str(col_map(tab20_map(i))).lstrip("#")
-        color = np.flip(np.array([int(color[i : i + 2], 16) for i in (0, 2, 4)]))
-
-        for l in sub_labels:
-            if l["video"] != cur_video:
-                continue
-            sInd = l["start"]
-            eInd = l["end"]
-
-            marker_posS = int(frame.shape[1] * sInd / amount_of_frames)
-            marker_posE = int(frame.shape[1] * eInd / amount_of_frames)
-
-            frame[
-                -49:,
-                marker_posS : marker_posE + 1,
-            ] = color
-
-    if label != -1:
-        color = str(col_map(tab20_map(label))).lstrip("#")
-        color = np.flip(np.array([int(color[i : i + 2], 16) for i in (0, 2, 4)]))
-
-        stemp = min(start, label_index)
-        eInd = max(start, label_index)
-
-        sInd = stemp
-
-        marker_posS = int(frame.shape[1] * sInd / amount_of_frames)
-        marker_posE = int(frame.shape[1] * eInd / amount_of_frames)
-
-        frame[
-            -49:,
-            marker_posS : marker_posE + 1,
-        ] = color
-
-    return frame
-
-
-eel.init("frontend")
 eel.browsers.set_path("electron", "node_modules/electron/dist/electron")
 
+eel.init("frontend")
 
-@eel.expose
-def get_progress_update():
-    if len(progresses) == 0:
-        eel.inferLoadBar(False)()
-    else:
-        eel.inferLoadBar(progresses)()
+electron_path = os.path.abspath("node_modules/electron/dist/electron")
+subprocess.Popen([electron_path, ".", str(port), "--trace-warnings"]) 
 
-@eel.expose
-def kill_streams():
-    global active_streams
-    global stop_threads
-    global tthread
 
-    workthreads.stop_threads()
+eel.start("frontend/index.html", mode=None, block=False, port=port)
 
-    for stream in active_streams.keys():
-        active_streams[stream].communicate(input=b"q")
-
-    stop_threads = True
-
-    if tthread:
-        tthread.raise_exception()
-        tthread.join()
-
-eel.start("frontend/index.html", mode="electron", block=False)
 
 workthreads.start_threads()
 

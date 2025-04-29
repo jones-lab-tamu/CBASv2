@@ -4,6 +4,7 @@
 const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
 
+const port = process.argv[2] || 8000
 
 const createWindow = () => {
     // Create the browser window.
@@ -19,7 +20,7 @@ const createWindow = () => {
     })
 
     // and load the index.html of the app.
-    mainWindow.loadURL('http://localhost:8000/index.html')
+    mainWindow.loadURL(`http://localhost:${port}/index.html`)
 
     // Open the DevTools.
     // mainWindow.webContents.openDevTools()
