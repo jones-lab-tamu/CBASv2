@@ -469,7 +469,7 @@ async function showInferenceModal(dataset) {
     }
 }
 
-async function startClassification() { // KLOIE CHANGES 4.16.25, buffer, made function async 
+async function startClassification() { // CHANGES 4.16.25, buffer, made function async 
     dataset = document.getElementById('im-dataset').innerHTML
 
     let dirs = Object.keys(dir_children)
@@ -513,7 +513,7 @@ async function startClassification() { // KLOIE CHANGES 4.16.25, buffer, made fu
     }
     //hide spinner
     document.getElementById('loading-spinner').classList.add('d-none');
-    
+
     inferenceModal.hide();
     inferenceModal = new bootstrap.Modal(document.getElementById('inferenceModal'));
 
