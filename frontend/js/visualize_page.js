@@ -1,197 +1,254 @@
-const ipc = window.ipcRenderer
+/**
+ * @file visualize_page.js
+ * Handles the visualization page UI, primarily for generating and displaying actograms.
+ */
 
-let loaded = false
-let routing = false
+// const ipc = window.ipcRenderer; // Not used in this file
 
-let vis_root_dir = null 
-let vis_sub_dir = null 
-let vis_model = null 
-let vis_behavior = null
+/** Flag to prevent `kill_streams` from being called during intentional page navigation. */
+let routingInProgress = false;
 
-let dir_children = new Object();
+// General error modal (assuming one errorModal element is shared across pages or defined in HTML)
+const errorModalElement = document.getElementById("errorModal");
+const errorMessageElement = document.getElementById("error-message");
+let generalErrorBsModal = errorModalElement ? new bootstrap.Modal(errorModalElement) : null;
 
-function read(attr) {
-    let project_string = window.localStorage.getItem('project')
-    let project = JSON.parse(project_string)
-    return project[attr]
-}
-
-function routeRecord() {
-    routing = true 
-    window.open('./record.html', '_self');
-}
-
-function routeLabelTrain() {
-    routing = true 
-    window.open('./label-train.html', '_self');
-}
-
-function routeVisualize() {
-    routing = true 
-    window.open('./visualize.html', '_self');
-}
-
-window.addEventListener("unload", function(e){
-    if(!routing) {
-        eel.kill_streams();
-    }
-});
-
-window.onbeforeunload = function (){
-    if(!routing) {
-        eel.kill_streams();
-    }
-}
-
-eel.expose(updateActogram);
-function updateActogram(val) {
-    // showProgressBar(); // 3.4, showing progress bar, 3.5 commented until load details are right
-    showBuffering(); //3.5, buffering signal load
-
-    let elem = document.getElementById('actogram-image');
-    elem.src = "data:image/jpeg;base64, " + val
-
-    elem.style.display="block"
-
-    hideBuffering(); //3.5, buffering signal hide
-
-}
-
-// added 3.5, in place of load bar, buffering funcs, for now...
-function showBuffering() {
-    let spinner = document.getElementById('loading-spinner');
-    spinner.style.display = "block";
-}
-function hideBuffering() {
-    let spinner = document.getElementById('loading-spinner');
-    spinner.style.display = "none";
-}
-
-function toggleVis(id) {
-    let elem = document.getElementById(id)
-
-    if(elem.style.display=='none') {
-        elem.style.display = 'block'
+/** Shows the error modal with a custom message. */
+function showErrorOnVisualizePage(message) {
+    if (errorMessageElement && generalErrorBsModal) {
+        errorMessageElement.innerText = message;
+        generalErrorBsModal.show();
     } else {
-        elem.style.display = 'none'
+        alert(message); // Fallback
     }
-
 }
 
-function setValues(rd, sd, md, beh) {
-    let fr = document.getElementById('vs-framerate').value
-    let bs = document.getElementById('vs-binsize').value
-    let st = document.getElementById('vs-start').value
-    let col = document.getElementById('vs-color').value
-    let th = document.getElementById('vs-threshold').value
-    let norm = document.getElementById('vs-norm').value
-    let lc = document.getElementById('vs-lcycle').value
 
-    let titleElem = document.getElementById('actogram-title') // added 2/23, acto title
-    titleElem.textContent = "Actogram for " + md + " - " + beh // added 2/23 ^^
+// --- Routing Functions ---
+function routeToRecordPage() { routingInProgress = true; window.location.href = './record.html';}
+function routeToLabelTrainPage() { routingInProgress = true; window.location.href = './label-train.html';}
+function routeToVisualizePage() { routingInProgress = true; window.location.href = './visualize.html';}
 
-    showBuffering(); // added 3.5, buffering siganl
-    eel.make_actogram(rd, sd, md, beh, fr, bs, st, col, th, norm, lc)
+// --- Eel Exposed Functions (Python to JS) ---
+
+/**
+ * Exposed to Python: Updates the actogram image display.
+ * @param {string | null} base64Val - Base64 encoded image string, or null if error/no image.
+ */
+eel.expose(updateActogramDisplay);
+function updateActogramDisplay(base64Val) {
+    const imageElement = document.getElementById('actogram-image');
+    const loadingSpinnerElement = document.getElementById('loading-spinner-actogram'); 
+
+    if (imageElement) {
+        if (base64Val) {
+            imageElement.src = "data:image/jpeg;base64," + base64Val;
+            imageElement.style.display = "block";
+        } else {
+            // Use the correct placeholder for this page
+            imageElement.src = "assets/noData.png"; 
+            imageElement.style.display = "block"; 
+            console.log("updateActogramDisplay received null, showing placeholder.");
+        }
+    }
+    if (loadingSpinnerElement) loadingSpinnerElement.style.display = "none"; 
 }
 
-function adjustActogram() {
-    let fr = document.getElementById('vs-framerate').value
-    let bs = document.getElementById('vs-binsize').value
-    let st = document.getElementById('vs-start').value
-    let col = document.getElementById('vs-color').value
-    let th = document.getElementById('vs-threshold').value
-    let norm = document.getElementById('vs-norm').value
-    let lc = document.getElementById('vs-lcycle').value
+// --- UI Helper Functions ---
 
-    eel.adjust_actogram(fr, bs, st, col, th, norm, lc)
+/** Shows a loading spinner specific to the actogram area. */
+function showActogramLoadingIndicator() {
+    const spinner = document.getElementById('loading-spinner-actogram');
+    if (spinner) spinner.style.display = "block";
+    const actogramImage = document.getElementById('actogram-image');
+    if (actogramImage) actogramImage.style.display = "none"; 
 }
 
-async function initialize() {
-    let directories = document.getElementById('directories')
+/**
+ * Toggles the visibility of an HTML element (used for an accordion-style tree).
+ * @param {string} elementId - The ID of the element to toggle.
+ */
+function toggleVisibility(elementId) {
+    const elem = document.getElementById(elementId);
+    if (elem) {
+        elem.style.display = (elem.style.display === 'none' || elem.style.display === '') ? 'block' : 'none';
+    }
+}
 
-    let recording_tree = await eel.get_recording_tree()()
-    if (!recording_tree) {
-        document.getElementById('error-message').innerText = 'No recordings yet, try this again when you have recorded videos.'
-        let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
-        errorModal.show()
+// --- Actogram Generation and Adjustment ---
+
+/**
+ * Gathers parameters from the UI and calls the backend to generate a new actogram.
+ */
+async function generateAndDisplayActogram(rootDir, sessionDir, modelName, behaviorName) {
+    const framerateStr = document.getElementById('vs-framerate').value;
+    const binsizeMinutesStr = document.getElementById('vs-binsize').value;
+    const startTimeStr = document.getElementById('vs-start').value;
+    const thresholdPercentStr = document.getElementById('vs-threshold').value;
+    const lightCyclePatternStr = document.getElementById('vs-lcycle').value;
+	const plotAcrophase = document.getElementById('vs-acrophase').checked; // Get checkbox state
+
+    // Corrected validation check
+    if (!framerateStr || !binsizeMinutesStr || !startTimeStr || !thresholdPercentStr) {
+        showErrorOnVisualizePage("All actogram parameters must be filled.");
         return;
     }
 
-    html = ''
-
-    for(i = 0; i < recording_tree.length; i++) {
-        let date = recording_tree[i]
-        let date_str = recording_tree[i][0]
-
-        html += `
-                <h3 class='text-light' onclick="toggleVis('rd` + date_str + `')" style="cursor:pointer;">` + date_str +`
-                </h3>`
-
-        html +=`
-                <div id='rd` + date_str + `' style=" display:none;">`
-
-        for (j = 0; j < date[1].length; j++) {
-            let time = date[1][j]
-            let time_str = time[0]
-
-            html += `
-                    <h4 class='text-light' onclick="toggleVis('rd`+ date_str +`sd`+ time_str +`')" style="cursor:pointer;padding-left:10px">`+ time_str +`
-                    </h4>`
-
-            html +=`
-                    <div id='rd` + date_str + `sd` + time_str + `' style=" display:none;">`
-
-            for (k = 0; k < time[1].length; k++) {
-                let model = time[1][k];
-                let model_str = model[0]
-
-                html += `
-                        <h5 class='text-light' onclick="toggleVis('rd`+ date_str +`sd` + time_str + `md` + model_str + `')" style="cursor:pointer;padding-left:20px">` + model_str + `
-                        </h5>`
-
-                html +=`
-                        <div id='rd` + date_str + `sd` + time_str + `md` + model_str + `' style="display:none;padding-left:30px;">`
-                
-                for(b = 0; b < model[1].length; b++) {
-                    let behavior_str = model[1][b];
-
-                    html += `
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" name="flexRadioDefault" id="md`+model_str +`-`+behavior_str+`" onclick="setValues('`+date_str+`','`+time_str+`','`+model_str+`','`+behavior_str+`')">
-                        <label class="form-check-label text-light h6" for="md`+model_str+`-`+behavior_str+`">
-                            `+behavior_str+`
-                        </label>
-                    </div>`
-
-                }
-
-                html +=`
-                </div>
-                    `
-
-            }
-
-            html +=`
-            </div>
-                `
-
-        }
-
-        html +=`
-        </div>
-            `
+    const actogramTitleElement = document.getElementById('actogram-title');
+    if (actogramTitleElement) {
+        actogramTitleElement.textContent = `Actogram: ${modelName} - ${behaviorName} (Recording: ${sessionDir})`;
     }
+    
+    showActogramLoadingIndicator(); 
 
-    directories.innerHTML = html
+    try {
+        // Corrected function call (removed color and norm)
+        await eel.make_actogram(
+            rootDir, sessionDir, modelName, behaviorName,
+            framerateStr, binsizeMinutesStr, startTimeStr,
+            thresholdPercentStr, lightCyclePatternStr, plotAcrophase
+        )();
+    } catch (error) {
+        console.error("Error calling eel.make_actogram:", error);
+        updateActogramDisplay(null);
+        showErrorOnVisualizePage(`Failed to generate actogram: ${error.message || error}`);
+    }
 }
 
+/** Gathers parameters from the UI and calls the backend to adjust the current actogram. */
+async function adjustCurrentDisplayActogram() {
+    const framerateStr = document.getElementById('vs-framerate').value;
+    const binsizeMinutesStr = document.getElementById('vs-binsize').value;
+    const startTimeStr = document.getElementById('vs-start').value;
+    const thresholdPercentStr = document.getElementById('vs-threshold').value;
+    const lightCyclePatternStr = document.getElementById('vs-lcycle').value;
+	const plotAcrophase = document.getElementById('vs-acrophase').checked;
+    
+    // Corrected validation check
+    if (!framerateStr || !binsizeMinutesStr || !startTimeStr || !thresholdPercentStr) {
+        showErrorOnVisualizePage("All actogram parameters must be filled for adjustment.");
+        return;
+    }
 
-setTimeout(function (){
-    initialize()
-}, 500)
+    showActogramLoadingIndicator();
+    try {
+        // Corrected function call (removed color and norm)
+        await eel.adjust_actogram(
+            framerateStr, binsizeMinutesStr, startTimeStr,
+            thresholdPercentStr, lightCyclePatternStr, plotAcrophase
+        )();
+    } catch (error) {
+        console.error("Error calling eel.adjust_actogram:", error);
+        updateActogramDisplay(null);
+        showErrorOnVisualizePage(`Failed to adjust actogram: ${error.message || error}`);
+    }
+}
 
-setTimeout(function (){
-    setInterval(function(){
-        adjustActogram()
-    }, 1000)
-}, 500)
+/** Initializes the page by fetching the recording tree and populating the selection UI. */
+async function initializeVisualizePageContent() {
+    const directoriesContainer = document.getElementById('directories');
+    if (!directoriesContainer) { console.error("Directories container not found!"); return;}
+
+    try {
+        const recordingTree = await eel.get_recording_tree()();
+        if (!recordingTree || recordingTree.length === 0) {
+            showErrorOnVisualizePage('No recordings with classifications found. Please run inference on some recordings first.');
+            directoriesContainer.innerHTML = "<p class='text-light'>No classified recordings available to visualize.</p>";
+            return;
+        }
+
+        let htmlBuilder = '';
+        recordingTree.forEach((dateEntry) => {
+            const dateStr = dateEntry[0];
+            const sessions = dateEntry[1];
+            const dateId = `rd-${dateStr.replace(/[\s\/\\:]/g, '-')}`;
+
+            htmlBuilder += `<h5 class='text-light mt-2 hand-cursor' onclick="toggleVisibility('${dateId}')"><i class="bi bi-calendar-date-fill me-2"></i>${dateStr}</h5>`;
+            htmlBuilder += `<div id='${dateId}' class='ms-3' style="display:none;">`;
+
+            sessions.forEach((sessionEntry) => {
+                const sessionName = sessionEntry[0];
+                const models = sessionEntry[1];
+                const sessionId = `${dateId}-sd-${sessionName.replace(/[\s\/\\:]/g, '-')}`;
+
+                htmlBuilder += `<h6 class='text-light mt-1 hand-cursor' onclick="toggleVisibility('${sessionId}')"><i class="bi bi-camera-reels-fill me-2"></i>${sessionName}</h6>`;
+                htmlBuilder += `<div id='${sessionId}' class='ms-3' style="display:none;">`;
+
+                models.forEach((modelEntry) => {
+                    const modelName = modelEntry[0];
+                    const behaviors = modelEntry[1];
+                    const modelId = `${sessionId}-md-${modelName.replace(/[\s\/\\:]/g, '-')}`;
+
+                    htmlBuilder += `<div class='text-light mt-1 hand-cursor' onclick="toggleVisibility('${modelId}')"><i class="bi bi-cpu-fill me-2"></i>${modelName}</div>`;
+                    htmlBuilder += `<div id='${modelId}' class='ms-3' style="display:none;">`;
+                    
+                    behaviors.forEach((behaviorName) => {
+                        const safeBehaviorNameForId = behaviorName.replace(/[\s\/\\:]/g, '-');
+                        const behaviorId = `${modelId}-beh-${safeBehaviorNameForId}`; 
+                        htmlBuilder += `
+                            <div class="form-check my-1">
+                                <input class="form-check-input" type="radio" name="actogramSelectionRadio" id="${behaviorId}" 
+                                       onclick="generateAndDisplayActogram('${dateStr}','${sessionName}','${modelName}','${behaviorName}')">
+                                <label class="form-check-label text-light small" for="${behaviorId}">
+                                    ${behaviorName}
+                                </label>
+                            </div>`;
+                    });
+                    htmlBuilder += `</div>`; 
+                });
+                htmlBuilder += `</div>`; 
+            });
+            htmlBuilder += `</div>`; 
+        });
+        directoriesContainer.innerHTML = htmlBuilder;
+
+    } catch (error) {
+        console.error("Error initializing visualization page:", error);
+        if (directoriesContainer) directoriesContainer.innerHTML = "<p class='text-danger text-center'>Error loading recording data. Check console.</p>";
+        showErrorOnVisualizePage(`Error loading data: ${error.message || error}`);
+    }
+}
+
+// --- Event Listeners ---
+
+/** Handles page unload. */
+window.addEventListener("unload", function(){
+    if(!routingInProgress) { if (typeof eel !== 'undefined' && eel.kill_streams) eel.kill_streams()().catch(err => console.error("Unload kill_streams error:", err));}
+});
+window.onbeforeunload = function (){
+    if(!routingInProgress) { if (typeof eel !== 'undefined' && eel.kill_streams) eel.kill_streams()().catch(err => console.error("Beforeunload kill_streams error:", err));}
+};
+
+/**
+ * Waits for the Eel WebSocket to be fully connected before proceeding.
+ */
+function waitForEelConnection() {
+    return new Promise(resolve => {
+        if (eel._websocket && eel._websocket.readyState === 1) {
+            resolve();
+            return;
+        }
+        const interval = setInterval(() => {
+            if (eel._websocket && eel._websocket.readyState === 1) {
+                clearInterval(interval);
+                resolve();
+            }
+        }, 100);
+    });
+}
+
+// Initial load of the page content
+document.addEventListener('DOMContentLoaded', async () => {
+    await waitForEelConnection();
+    initializeVisualizePageContent();
+
+    const adjustmentControlsIds = ['vs-framerate', 'vs-binsize', 'vs-start', 'vs-threshold', 'vs-lcycle', 'vs-acrophase'];
+    adjustmentControlsIds.forEach(controlId => {
+        const elem = document.getElementById(controlId);
+        if (elem) {
+            // Use 'change' for select dropdowns, and 'input' for sliders/number inputs for responsiveness
+            const eventType = (elem.type === 'checkbox' || elem.tagName.toLowerCase() === 'select') ? 'change' : 'input';
+            elem.addEventListener(eventType, adjustCurrentDisplayActogram);
+        }
+    });
+});

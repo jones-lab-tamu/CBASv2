@@ -1,464 +1,522 @@
-const ipc = window.ipcRenderer
+/**
+ * @file record_page.js
+ * Manages the recording page UI and interactions.
+ * Handles camera listing, settings, starting/stopping recordings,
+ * and displaying camera thumbnails and status.
+ */
 
-let loaded = false
+// const ipc = window.ipcRenderer; // Not directly used in this file, but good to keep if future IPC is needed
 
-let routing = false
+/** Flag to prevent `kill_streams` from being called during intentional page navigation. */
+let routingInProgress = false;
 
-let cameraModal = new bootstrap.Modal(document.getElementById('addCamera'))
-let statusModal = new bootstrap.Modal(document.getElementById('statusModal'))
+// Initialize Bootstrap Modals safely
+const addCameraModalElement = document.getElementById('addCamera');
+let addCameraBsModal = addCameraModalElement ? new bootstrap.Modal(addCameraModalElement) : null;
 
-function routeRecord() {
-    routing = true
-    window.open('./record.html', '_self');
+const statusModalElement = document.getElementById('statusModal');
+let statusBsModal = statusModalElement ? new bootstrap.Modal(statusModalElement) : null;
+
+const cameraSettingsModalElement = document.getElementById('cameraSettings');
+let cameraSettingsBsModal = cameraSettingsModalElement ? new bootstrap.Modal(cameraSettingsModalElement) : null;
+
+const errorModalElement = document.getElementById('errorModal'); // General error modal for this page
+const errorMessageElement = document.getElementById("error-message");
+let generalErrorBsModal = errorModalElement ? new bootstrap.Modal(errorModalElement) : null;
+
+/** Stores the original camera name when opening settings, for rename detection. */
+let originalCameraNameForSettings = "";
+/** Stores the current image for the settings modal preview */
+let modalPreviewImage = new Image();
+
+
+/** Shows the error modal with a custom message. */
+function showErrorOnRecordPage(message) {
+    if (errorMessageElement && generalErrorBsModal) {
+        errorMessageElement.innerText = message;
+        generalErrorBsModal.show();
+    } else {
+        alert(message); // Fallback
+    }
 }
-function routeLabelTrain() {
-    routing = true
-    window.open('./label-train.html', '_self');
-}
-function routeVisualize() {
-    routing = true
-    window.open('./visualize.html', '_self');
-}
 
-async function loadCameraHTML() {
-    let container = document.getElementById('camera-container');
-    container.innerHTML = ""
+/** Navigates to the record page (self). */
+function routeToRecordPage() { routingInProgress = true; window.location.href = './record.html'; }
+/** Navigates to the label & train page. */
+function routeToLabelTrainPage() { routingInProgress = true; window.location.href = './label-train.html'; }
+/** Navigates to the visualize page. */
+function routeToVisualizePage() { routingInProgress = true; window.location.href = './visualize.html'; }
 
-    let cameras = await eel.get_camera_list()();
+/**
+ * Dynamically loads camera cards into the UI based on data from the backend.
+ */
+async function loadCameraHTMLCards() {
+    const container = document.getElementById('camera-container');
+    if (!container) { console.error("Camera container element not found!"); return; }
+    container.innerHTML = ""; // Clear existing camera cards
 
-    for (const [cameraName, cameraSettings] of cameras) {
-        let displayName = cameraName;
-
-        /* We want to put an 'uncropped' note on any uncropped cameras. */
-        let cx = parseFloat(cameraSettings['crop_left_x']);
-        let cy = parseFloat(cameraSettings['crop_top_y']);
-        let cw = parseFloat(cameraSettings['crop_width']);
-        let ch = parseFloat(cameraSettings['crop_height']);
-
-        let isCropped = cx != 0 || cy != 0 || cw != 1 || ch != 1
-        if (!isCropped) {
-            displayName += " (uncropped)"
+    try {
+        const cameras = await eel.get_camera_list()();
+        if (!cameras || cameras.length === 0) {
+            container.innerHTML = "<div class='col'><p class='text-light text-center mt-3'>No cameras configured. Click the '+' button below to add a new camera.</p></div>";
+            return;
         }
 
-        // <img id="camera-` + cameraName + `" src="assets/noConnection.png" class="card-body d-flex justify-content-center align-items-center bg-light" style="width: 300px; height: 200px; padding: 0px; margin:0px"/>
-        container.innerHTML += `
-                    <div class="col-auto"">
+        for (const [cameraName, cameraSettings] of cameras) {
+            let displayName = cameraName;
+            const cx = parseFloat(cameraSettings['crop_left_x']);
+            const cy = parseFloat(cameraSettings['crop_top_y']);
+            const cw = parseFloat(cameraSettings['crop_width']);
+            const ch = parseFloat(cameraSettings['crop_height']);
+            const isCropped = cx !== 0 || cy !== 0 || cw !== 1 || ch !== 1;
+            if (!isCropped) {
+                displayName += " <small class='text-muted'>(uncropped)</small>";
+            }
 
-                        <div class="card shadow text-white bg-dark mb-3" style="width: max-content; padding-left: 5px; padding-right: 5px; padding-bottom: 5px;">
-                            <div class="card-header">
-                                <h1 class="display-6">` + displayName + `</h1>
+            container.innerHTML += `
+                <div class="col-auto mb-3">
+                    <div class="card shadow text-white bg-dark" style="width: 320px;"> <!-- Fixed width for consistency -->
+                        <div class="card-header py-2"> <!-- Reduced padding -->
+                            <h5 class="card-title mb-0">${displayName}</h5>
+                        </div>
+                        <canvas id="camera-${cameraName}" width="300" height="225" style="background-color: #343a40; display: block; margin: auto; margin-top:10px;"></canvas> <!-- Adjusted canvas size and centering -->
+                        <div class="card-footer d-flex justify-content-center p-2">
+                            <div id="before-recording-${cameraName}" style="display: flex;"> <!-- Use display:flex for button group -->
+                                <button class="btn btn-sm btn-outline-light me-1" onclick="loadCameraSettings('${cameraName}')" title="Crop/Settings"><i class="bi bi-crop"></i></button>
+                                <button class="btn btn-sm btn-outline-light me-1" onclick="liveViewCamera('${cameraName}')" title="Live View (VLC)"><i class="bi bi-eye-fill"></i></button>
+                                <button class="btn btn-sm btn-success" onclick="startCamera('${cameraName}')" title="Start Recording"><i class="bi bi-camera-video-fill"></i> Start</button>
                             </div>
-                    ` + `
-                            <canvas id="camera-` + cameraName + `" width=300px height=300px></canvas>
-                    ` + `
-                            <div id="before-recording-` + cameraName + `" style="visibility: visible;">
-                                <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="startCamera('` + cameraName + `')" style="margin-bottom:9px;margin-right:15px; width: 40px; height: 40px">
-                                    <i class="bi bi-camera-video-fill" style="color:white; font-size:20px;"></i>
-                                </div>
-                                <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="loadCameraSettings('` + cameraName + `')" style="margin-bottom:9px;margin-right:60px; width: 40px; height: 40px">
-                                    <i class="bi bi-crop" style="color:white; font-size:20px;"></i>
-                                </div>
-                                <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="liveViewCamera('` + cameraName + `')" style="margin-bottom:9px;margin-right:105px; width: 40px; height: 40px">
-                                    <i class="bi bi-eye-fill" style="color:white; font-size:20px;"></i>
-                                </div>
-                            </div>
-                            <div id="during-recording-` + cameraName + `" style="visibility: hidden;">
-                                <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="stopCamera('` + cameraName + `','')" style="margin-bottom:9px;margin-right:15px; width: 40px; height: 40px">
-                                    <i class="bi bi-square-fill" style="color:white; font-size:20px;"></i>
-                                </div>
-                                <div class="btn rounded position-absolute bottom-0 end-0 bg-dark d-flex align-items-center justify-content-center" onclick="liveViewCamera('` + cameraName + `')" style="margin-bottom:9px;margin-right:60px; width: 40px; height: 40px">
-                                    <i class="bi bi-eye-fill" style="color:white; font-size:20px;"></i>
-                                </div>
+                            <div id="during-recording-${cameraName}" style="display: none;"> <!-- Use display:none for button group -->
+                                <button class="btn btn-sm btn-outline-light me-1" onclick="liveViewCamera('${cameraName}')" title="Live View (VLC)"><i class="bi bi-eye-fill"></i></button>
+                                <button class="btn btn-sm btn-danger" onclick="stopCamera('${cameraName}')" title="Stop Recording"><i class="bi bi-square-fill"></i> Stop</button>
                             </div>
                         </div>
-                    </div>`
-
-        var canvas = document.getElementById('camera-' + cameraName);
-        var ctx = canvas.getContext("2d");
-        var image = new Image();
-        image.src = "assets/noConnection.png";
-        image.onload = function () {
-            ctx.drawImage(image, 0, 0, 300, 300)
+                    </div>
+                </div>`;
+            
+            const canvas = document.getElementById('camera-' + cameraName);
+            if (canvas) {
+                const ctx = canvas.getContext("2d");
+                const placeholderImage = new Image();
+                placeholderImage.src = "assets/noConnection.png"; // Ensure this asset exists
+                placeholderImage.onload = () => ctx.drawImage(placeholderImage, 0, 0, canvas.width, canvas.height);
+                placeholderImage.onerror = () => { // If placeholder itself fails
+                    ctx.fillStyle = "#404040"; ctx.fillRect(0,0,canvas.width,canvas.height);
+                    ctx.fillStyle = "white"; ctx.textAlign="center"; ctx.font="12px Arial"; ctx.fillText("No Preview", canvas.width/2, canvas.height/2);
+                }
+            }
         }
+    } catch (error) {
+        console.error("Error loading camera HTML:", error);
+        showErrorOnRecordPage(`Failed to load camera list: ${error.message || error}`);
+        container.innerHTML = "<div class='col'><p class='text-danger text-center mt-3'>Error loading cameras.</p></div>";
     }
 }
 
-function setRecordAllIcon(isRecording) {
-    const cameraFab = document.querySelector('.fab-container-right .fab:nth-child(2) i'); // Select the second button's icon
+/** Sets the icon and behavior for the "Record All / Stop All" floating action button. */
+function setRecordAllIcon(isAnyRecording) {
+    const cameraFabButton = document.querySelector('.fab-container-right .fab[onclick*="startAllCameras"], .fab-container-right .fab[onclick*="stopAllCameras"]');
+    if (!cameraFabButton) return;
+    const cameraFabIcon = cameraFabButton.querySelector('i');
+    if (!cameraFabIcon) return;
 
-    if (isRecording) {
-        // Change to "Stop" icon
-        cameraFab.classList.remove('bi-camera-video-fill');
-        cameraFab.classList.add('bi-square-fill');
-        cameraFab.style.fontSize = '30px'; // Adjust size if needed
-        cameraFab.onclick = stopAllCameras;
+    if (isAnyRecording) {
+        cameraFabIcon.classList.remove('bi-camera-video-fill');
+        cameraFabIcon.classList.add('bi-square-fill');
+        cameraFabIcon.style.color = 'red';
+        cameraFabButton.onclick = stopAllCameras;
+        cameraFabButton.title = "Stop All Recordings";
     } else {
-        // Change to "Camera" icon
-        cameraFab.classList.remove('bi-square-fill');
-        cameraFab.classList.add('bi-camera-video-fill');
-        cameraFab.style.fontSize = '25px'; // Adjust size if needed
-        cameraFab.onclick = startAllCameras;
+        cameraFabIcon.classList.remove('bi-square-fill');
+        cameraFabIcon.classList.add('bi-camera-video-fill');
+        cameraFabIcon.style.color = 'white';
+        cameraFabButton.onclick = startAllCameras;
+        cameraFabButton.title = "Start All Recordings";
     }
 }
 
+/** Exposed to Python: Updates a camera's canvas with a new image blob. */
 eel.expose(updateImageSrc);
-function updateImageSrc(name, val) {
-    let canvas = document.getElementById('camera-' + name);
-    var ctx = canvas.getContext("2d");
+async function updateImageSrc(name, val) {
+    const canvas = document.getElementById('camera-' + name);
+    if (!canvas) { return; }
+    const ctx = canvas.getContext("2d");
 
-    var img = new Image();
-    img.src = "data:image/jpeg;base64, " + val
+    if (!val) { // Handle null or empty blob (e.g., error fetching thumbnail)
+        console.warn(`Received null/empty image data for camera ${name}. Displaying placeholder.`);
+        const placeholderImg = new Image();
+        placeholderImg.src = "assets/noConnection.png";
+        placeholderImg.onload = () => { ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(placeholderImg,0,0,canvas.width,canvas.height); };
+        placeholderImg.onerror = () => { ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle="#404040"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle="white"; ctx.fillText("No Preview", canvas.width/2, canvas.height/2);};
+        return;
+    }
 
-    canvas.setAttribute("cbas_image_source", img.src)
+    const img = new Image();
+    img.src = "data:image/jpeg;base64," + val;
+    canvas.setAttribute("cbas_image_source", img.src);
 
     img.onload = async function () {
-        const settings = await eel.get_camera_settings(name)();
+        try {
+            const settings = await eel.get_camera_settings(name)();
+            if (!settings) {
+                console.warn(`Settings not found for ${name} during thumbnail update.`);
+                ctx.clearRect(0,0,canvas.width, canvas.height); ctx.fillStyle="#404040"; ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.fillStyle="white"; ctx.textAlign="center"; ctx.fillText("Settings Error", canvas.width/2, canvas.height/2);
+                return;
+            }
+            const s = {
+                x: Math.max(0, Math.min(1, parseFloat(settings['crop_left_x']))),
+                y: Math.max(0, Math.min(1, parseFloat(settings['crop_top_y']))),
+                w: Math.max(0, Math.min(1, parseFloat(settings['crop_width']))),
+                h: Math.max(0, Math.min(1, parseFloat(settings['crop_height'])))
+            };
+            s.w = Math.min(s.w, 1 - s.x); s.h = Math.min(s.h, 1 - s.y);
 
-        const cropX = settings['crop_left_x'] * img.width;
-        const cropY = settings['crop_top_y'] * img.height;
-        const cropWidth = settings['crop_width'] * img.width;
-        const cropHeight = settings['crop_height'] * img.height;
-        const resolution = settings['resolution']
+            const cropX = s.x * img.naturalWidth; const cropY = s.y * img.naturalHeight;
+            const cropWidth = s.w * img.naturalWidth; const cropHeight = s.h * img.naturalHeight;
+            const targetResolution = parseInt(settings['resolution']) || Math.min(canvas.width, canvas.height);
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        console.log(cropX)
-        console.log(cropY)
-        console.log(cropWidth)
-        console.log(cropHeight)
-        drawImageScaled(img, ctx, cropX, cropY, cropWidth, cropHeight, resolution);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (cropWidth > 0 && cropHeight > 0) {
+                drawImageOnCanvas(img, ctx, cropX, cropY, cropWidth, cropHeight, targetResolution);
+            } else {
+                 drawImageOnCanvas(img, ctx, 0, 0, img.naturalWidth, img.naturalHeight, targetResolution);
+            }
+        } catch (error) {
+            console.error(`Error in updateImageSrc onload for ${name}:`, error);
+             ctx.clearRect(0,0,canvas.width, canvas.height); ctx.fillStyle="#404040"; ctx.fillRect(0,0,canvas.width,canvas.height);
+             ctx.fillStyle="white"; ctx.textAlign="center"; ctx.fillText("Display Error", canvas.width/2, canvas.height/2);
+        }
+    };
+    img.onerror = function() {
+        console.error(`Failed to load image data for camera ${name}.`);
+        ctx.clearRect(0,0,canvas.width, canvas.height); ctx.fillStyle="#404040"; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle="white"; ctx.textAlign="center"; ctx.fillText("Image Load Fail", canvas.width/2, canvas.height/2);
     }
 }
 
+/** Updates UI buttons based on active recording streams. */
 async function updateCamButtons() {
-    let cameraNames = (await eel.get_camera_list()()).map(([first, _]) => first);
-    let activeNames = await eel.get_active_streams()();
+    try {
+        const camerasResult = await eel.get_camera_list()();
+        if (!camerasResult) { setRecordAllIcon(false); return; }
+        const cameraNames = camerasResult.map(([name, _]) => name);
+        const activeStreams = await eel.get_active_streams()() || [];
+        setRecordAllIcon(activeStreams.length > 0);
 
-    console.log(cameraNames)
-    console.log(activeNames)
-
-    if (activeNames) {
-        const allActive = cameraNames.every(camera => activeNames.includes(camera));
-
-        setRecordAllIcon(allActive)
-
-        console.log(allActive)
-
-        for (const activeName of activeNames) {
-
-            let buttons = document.getElementById('before-recording-' + activeName)
-            buttons.style.visibility = 'hidden';
-
-            buttons = document.getElementById('during-recording-' + activeName)
-            buttons.style.visibility = 'visible';
-        }
-    } else {
-        setRecordAllIcon(false)
-    }
+        cameraNames.forEach(camName => {
+            const beforeRec = document.getElementById(`before-recording-${camName}`);
+            const duringRec = document.getElementById(`during-recording-${camName}`);
+            if (beforeRec && duringRec) {
+                const isCamActive = activeStreams.includes(camName);
+                beforeRec.style.display = isCamActive ? 'none' : 'flex'; // Use display none/flex
+                duringRec.style.display = isCamActive ? 'flex' : 'none';
+            }
+        });
+    } catch (error) { console.error("Error updating camera buttons:", error); }
 }
 
+/** Loads initial camera list and triggers thumbnail downloads. */
 async function loadCameras() {
-    await loadCameraHTML();
-
-    updateCamButtons();
-
-    eel.download_camera_thumbnails()()
+    await loadCameraHTMLCards();
+    await updateCamButtons();
+    if (typeof eel !== 'undefined' && eel.download_camera_thumbnails) {
+        eel.download_camera_thumbnails()();
+    }
 }
 
-function updateCameras() {
-    eel.download_camera_thumbnails()()
-
-    updateCamButtons();
-}
-
-function drawImageScaled(img, ctx, sx, sy, sw, sh, resolution) {
-    var canvas = ctx.canvas;
-    var hRatio = canvas.width / sw;
-    var vRatio = canvas.height / sh;
-    var ratio = Math.min(hRatio, vRatio);
-    var centerShift_x = (canvas.width - resolution) / 2;
-    var centerShift_y = (canvas.height - resolution) / 2;
+/** Draws a (potentially cropped) image scaled to fit a target resolution within the canvas. */
+function drawImageOnCanvas(img, ctx, sx, sy, sw, sh, targetResolution) {
+    const canvas = ctx.canvas;
+    if (sw <= 0 || sh <= 0) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+    const ratio = Math.min(targetResolution / sw, targetResolution / sh);
+    const drawWidth = sw * ratio;
+    const drawHeight = sh * ratio;
+    const destX = (canvas.width - drawWidth) / 2;
+    const destY = (canvas.height - drawHeight) / 2;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, sx, sy, sw, sh, centerShift_x, centerShift_y, resolution, resolution);
+    ctx.drawImage(img, sx, sy, sw, sh, destX, destY, drawWidth, drawHeight);
 }
 
-let oldCameraName = ""
-
+/** Loads camera settings into the modal for editing. */
 async function loadCameraSettings(cameraName) {
-    var canvas = document.getElementById("camera-image");
-    var ctx = canvas.getContext("2d");
+    const modalCanvas = document.getElementById("camera-image-settings-preview"); // Updated ID
+    if (!modalCanvas) { console.error("Modal canvas 'camera-image-settings-preview' not found."); return; }
+    const modalCtx = modalCanvas.getContext("2d");
 
-    let settings = await eel.get_camera_settings(cameraName)()
-    if (settings) {
+    try {
+        const settings = await eel.get_camera_settings(cameraName)();
+        if (settings) {
+            originalCameraNameForSettings = cameraName;
+            document.getElementById('cs-name').value = cameraName;
+            document.getElementById('cs-url').value = settings['rtsp_url'];
+            document.getElementById('cs-framerate').value = settings['framerate'];
+            document.getElementById('cs-resolution').value = settings['resolution'];
+            document.getElementById('cs-cropx').value = settings['crop_left_x'];
+            document.getElementById('cs-cropy').value = settings['crop_top_y'];
+            document.getElementById('cs-crop-width').value = settings['crop_width'];
+            document.getElementById('cs-crop-height').value = settings['crop_height'];
 
-        url = settings['rtsp_url']
-        framerate = settings['framerate']
-        resolution = settings['resolution']
-        cx = settings['crop_left_x']
-        cy = settings['crop_top_y']
-        cw = settings['crop_width']
-        ch = settings['crop_height']
+            const fieldsToWatch = ['cs-resolution', 'cs-cropx', 'cs-cropy', 'cs-crop-width', 'cs-crop-height'];
+            fieldsToWatch.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.oninput = () => drawBoundsOnModalCanvas(modalImage); // Use global modalImage
+            });
+            
+            const mainCanvasImageSrc = document.getElementById('camera-' + cameraName)?.getAttribute("cbas_image_source");
+            modalPreviewImage.onload = () => { // Use the global modalPreviewImage
+                const aspectRatio = modalPreviewImage.naturalWidth / modalPreviewImage.naturalHeight;
+                const modalCanvasMaxWidth = 400; 
+                modalCanvas.width = Math.min(modalPreviewImage.naturalWidth, modalCanvasMaxWidth);
+                modalCanvas.height = modalCanvas.width / aspectRatio;
+                drawBoundsOnModalCanvas(modalPreviewImage);
+            };
+            modalPreviewImage.onerror = () => {
+                 modalCtx.clearRect(0,0,modalCanvas.width, modalCanvas.height);
+                 modalCtx.fillStyle="grey"; modalCtx.fillRect(0,0,modalCanvas.width,modalCanvas.height);
+                 modalCtx.fillStyle="white"; modalCtx.textAlign="center"; modalCtx.fillText("Preview Error", modalCanvas.width/2, modalCanvas.height/2);
+            };
+            modalPreviewImage.src = mainCanvasImageSrc || "assets/noConnection.png";
 
-        oldCameraName = cameraName
 
-        document.getElementById('cs-name').value = cameraName
-        document.getElementById('cs-url').value = url
-        document.getElementById('cs-framerate').value = framerate
-        document.getElementById('cs-resolution').value = resolution
-        document.getElementById('cs-cropx').value = cx
-        document.getElementById('cs-cropy').value = cy
-        document.getElementById('cs-crop-width').value = cw
-        document.getElementById('cs-crop-height').value = ch
-
-        document.getElementById('cs-resolution').onchange = drawBounds
-
-        document.getElementById('cs-cropx').onchange = drawBounds
-        document.getElementById('cs-cropy').onchange = drawBounds
-        document.getElementById('cs-crop-width').onchange = drawBounds
-        document.getElementById('cs-crop-height').onchange = drawBounds
-
-        var image = new Image();
-        image.src = document.getElementById('camera-' + cameraName).getAttribute("cbas_image_source")
-
-        function drawBounds() {
-            ctx.clearRect(0, 0, image.width, image.height)
-
-            if (document.getElementById('cs-crop-width').value > 1 - document.getElementById('cs-cropx').value) {
-                document.getElementById('cs-crop-width').value = 1 - document.getElementById('cs-cropx').value
-            }
-
-            if (document.getElementById('cs-crop-height').value > 1 - document.getElementById('cs-cropy').value) {
-                document.getElementById('cs-crop-height').value = 1 - document.getElementById('cs-cropy').value
-            }
-
-            resolution = document.getElementById('cs-resolution').value
-
-            x = document.getElementById('cs-cropx').value * image.width
-            y = document.getElementById('cs-cropy').value * image.height
-            w = document.getElementById('cs-crop-width').value * image.width
-            h = document.getElementById('cs-crop-height').value * image.height
-
-            // FUCK
-            drawImageScaled(image, ctx, x, y, w, h, resolution);
+            if (cameraSettingsBsModal) cameraSettingsBsModal.show();
+        } else {
+            showErrorOnRecordPage(`Could not load settings for camera: ${cameraName}`);
         }
-
-        image.onload = function () {
-            drawBounds();
-        };
-
-        let modal = new bootstrap.Modal(document.getElementById('cameraSettings'))
-        modal.show()
+    } catch (error) {
+        console.error(`Error in loadCameraSettings for ${cameraName}:`, error);
+        showErrorOnRecordPage(`Failed to load settings: ${error.message || error}`);
     }
 }
 
+/** Redraws the crop bounds on the modal's canvas. */
+function drawBoundsOnModalCanvas(imageToDraw) { // Pass the image object
+    const modalCanvas = document.getElementById("camera-image-settings-preview");
+    if (!modalCanvas || !imageToDraw || !imageToDraw.complete || imageToDraw.naturalWidth === 0) {
+        return;
+    }
+    const modalCtx = modalCanvas.getContext("2d");
+
+    let cxVal = Math.max(0, Math.min(1, parseFloat(document.getElementById('cs-cropx').value) || 0));
+    let cyVal = Math.max(0, Math.min(1, parseFloat(document.getElementById('cs-cropy').value) || 0));
+    let cwVal = Math.max(0, parseFloat(document.getElementById('cs-crop-width').value) || 1);
+    let chVal = Math.max(0, parseFloat(document.getElementById('cs-crop-height').value) || 1);
+    cwVal = Math.min(cwVal, 1 - cxVal); chVal = Math.min(chVal, 1 - cyVal);
+    
+    document.getElementById('cs-cropx').value = cxVal.toFixed(3);
+    document.getElementById('cs-cropy').value = cyVal.toFixed(3);
+    document.getElementById('cs-crop-width').value = cwVal.toFixed(3);
+    document.getElementById('cs-crop-height').value = chVal.toFixed(3);
+
+    const sx = cxVal * imageToDraw.naturalWidth; const sy = cyVal * imageToDraw.naturalHeight;
+    const sw = cwVal * imageToDraw.naturalWidth; const sh = chVal * imageToDraw.naturalHeight;
+
+    modalCtx.clearRect(0, 0, modalCanvas.width, modalCanvas.height);
+    // Draw the image scaled to fit the canvas first
+    const canvasAspect = modalCanvas.width / modalCanvas.height;
+    const imgAspect = imageToDraw.naturalWidth / imageToDraw.naturalHeight;
+    let drawW, drawH, drawX, drawY;
+    if (imgAspect > canvasAspect) { // Image wider than canvas
+        drawW = modalCanvas.width;
+        drawH = modalCanvas.width / imgAspect;
+        drawX = 0;
+        drawY = (modalCanvas.height - drawH) / 2;
+    } else { // Image taller or same aspect
+        drawH = modalCanvas.height;
+        drawW = modalCanvas.height * imgAspect;
+        drawY = 0;
+        drawX = (modalCanvas.width - drawW) / 2;
+    }
+    modalCtx.drawImage(imageToDraw, drawX, drawY, drawW, drawH);
+    
+    if (sw > 0 && sh > 0) {
+        modalCtx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+        modalCtx.lineWidth = Math.max(1, modalCanvas.width / 150); // Scale line width
+        modalCtx.strokeRect(
+            drawX + (sx * (drawW / imageToDraw.naturalWidth)), 
+            drawY + (sy * (drawH / imageToDraw.naturalHeight)), 
+            sw * (drawW / imageToDraw.naturalWidth), 
+            sh * (drawH / imageToDraw.naturalHeight)
+        );
+    }
+}
+
+/** Saves updated camera settings. */
 async function saveCameraSettings() {
-    let cameraName = document.getElementById('cs-name').value
-
-    let cameraSettings = {
+    const newCameraName = document.getElementById('cs-name').value;
+    if (!newCameraName.trim()) { showErrorOnRecordPage("Camera name cannot be empty."); return; }
+    const settingsToSave = {
         "rtsp_url": document.getElementById('cs-url').value,
-        "framerate": document.getElementById('cs-framerate').value,
-        "resolution": document.getElementById('cs-resolution').value,
-        'crop_left_x': document.getElementById('cs-cropx').value,
-        'crop_top_y': document.getElementById('cs-cropy').value,
-        'crop_width': document.getElementById('cs-crop-width').value,
-        'crop_height': document.getElementById('cs-crop-height').value,
-    }
-
-    if (cameraName != oldCameraName) {
-        await eel.rename_camera(oldCameraName, cameraName)
-    }
-
-    await eel.save_camera_settings(cameraName, cameraSettings)
-
-    loadCameras()
+        "framerate": parseInt(document.getElementById('cs-framerate').value) || 10,
+        "resolution": parseInt(document.getElementById('cs-resolution').value) || 256,
+        'crop_left_x': parseFloat(document.getElementById('cs-cropx').value) || 0,
+        'crop_top_y': parseFloat(document.getElementById('cs-cropy').value) || 0,
+        'crop_width': parseFloat(document.getElementById('cs-crop-width').value) || 1,
+        'crop_height': parseFloat(document.getElementById('cs-crop-height').value) || 1,
+    };
+    try {
+        let finalCameraNameToUse = originalCameraNameForSettings;
+        if (newCameraName !== originalCameraNameForSettings) {
+            const renameSuccess = await eel.rename_camera(originalCameraNameForSettings, newCameraName)();
+            if (!renameSuccess) { showErrorOnRecordPage(`Failed to rename. '${newCameraName}' may exist.`); return; }
+            finalCameraNameToUse = newCameraName;
+        }
+        const saveSuccess = await eel.save_camera_settings(finalCameraNameToUse, settingsToSave)();
+        if (saveSuccess) {
+            if (cameraSettingsBsModal) cameraSettingsBsModal.hide();
+            await loadCameras(); 
+        } else { showErrorOnRecordPage("Failed to save settings (backend error)."); }
+    } catch (e) { console.error("Save settings error:", e); showErrorOnRecordPage(`Error: ${e.message||e}`); }
 }
 
-function showCameraModal() {
-    cameraModal.show()
-}
+/** Shows the "Add Camera" modal. */
+function showAddCameraModal() { if (addCameraBsModal) addCameraBsModal.show(); } // Renamed for clarity
 
+/** Shows the status modal. */
 async function showStatusModal() {
-    let status = await eel.get_cbas_status()();
-    let streams = status["streams"]
-    if (!streams) {
-        document.getElementById("status-streams").innerText = "No cameras are currently recording."
-    } else {
-        document.getElementById("status-streams").innerText = "Recording cameras: " + streams.join(", ")
-    }
-
-    let encodeFileCount = status["encode_file_count"]
-    document.getElementById("status-encode-count").innerText = "Video files to encode: " + encodeFileCount;
-
-    statusModal.show()
+    try {
+        const status = await eel.get_cbas_status()();
+        const streamsEl = document.getElementById("status-streams");
+        const encodeEl = document.getElementById("status-encode-count");
+        if(status){
+            if (streamsEl) streamsEl.innerText = (status.streams) ? "Recording: " + status.streams.join(", ") : "No cameras recording.";
+            if (encodeEl) encodeEl.innerText = "Files to encode: " + status.encode_file_count;
+        } else {
+            if(streamsEl) streamsEl.innerText = "Status unavailable.";
+            if(encodeEl) encodeEl.innerText = "Files to encode: unavailable";
+        }
+        if (statusBsModal) statusBsModal.show();
+    } catch (e) { console.error("Get status error:", e); }
 }
 
-async function updateStatusModalIcon() {
-    let cameraIcon = document.getElementById("status-camera-icon");
-    let cameraOutline = document.getElementById("status-camera-outline");
-
-    let status = await eel.get_cbas_status()();
-
-    let streams = status["streams"]
-    if (!streams) {
-        cameraIcon.style.color = "white"; // Set to grey if inactive
-        cameraIcon.style.animation = "none";
-
-        cameraOutline.style.color = "white";
-        cameraOutline.style.animation = "none";
-    } else {
-        cameraIcon.style.color = "red"; // Set to red if active
-        cameraIcon.style.animation = "fadeInOut 1s infinite";
-
-        cameraOutline.style.color = "red";
-        cameraOutline.style.animation = "fadeInOut 1s infinite";
-    }
+/** Updates the animated status icon in the FAB. */
+async function updateStatusIcon() { // Renamed for clarity
+    const camIcon = document.getElementById("status-camera-icon");
+    const camOutline = document.getElementById("status-camera-outline");
+    if (!camIcon || !camOutline) return;
+    try {
+        const status = await eel.get_cbas_status()();
+        const isStreaming = status && status.streams && status.streams.length > 0;
+        const animationClass = "status-blinking"; 
+        [camIcon, camOutline].forEach(el => {
+            el.style.color = isStreaming ? "red" : "white";
+            isStreaming ? el.classList.add(animationClass) : el.classList.remove(animationClass);
+        });
+    } catch (e) { console.error("Update status icon error:", e); }
 }
 
-async function addCamera() {
-    let name = document.getElementById('camera-name').value
-    let rtsp = document.getElementById('rtsp-url').value
-
-    if (name == '' || rtsp == '') {
-        document.getElementById('error-message').innerText = 'Please fill in all fields.'
-        let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
-        errorModal.show()
-        return
-    }
-
-    let result = await eel.create_camera(name, rtsp)()
-
-    if (result == null) {
-        cameraModal.hide()
-        cameraModal = new bootstrap.Modal(document.getElementById('addCamera'))
-    } else {
-        document.getElementById('error-message').innerText = ret
-        let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
-        errorModal.show()
-    }
-
-    loadCameras();
+/** Adds a new camera. */
+async function addCameraSubmit() { // Renamed for clarity
+    const name = document.getElementById('camera-name-modal-input').value; // Assuming different ID for modal input
+    const rtsp = document.getElementById('rtsp-url-modal-input').value;
+    if (!name.trim() || !rtsp.trim()) { showErrorOnRecordPage('Name and RTSP URL required.'); return; }
+    try {
+        const success = await eel.create_camera(name, rtsp)();
+        if (success) {
+            if (addCameraBsModal) addCameraBsModal.hide();
+            document.getElementById('camera-name-modal-input').value = ""; 
+            document.getElementById('rtsp-url-modal-input').value = "";
+            await loadCameras();
+        } else { showErrorOnRecordPage(`Failed to create '${name}'. It may exist.`); }
+    } catch (e) { console.error("Add camera error:", e); showErrorOnRecordPage("Error adding camera."); }
 }
 
-function removeCamera() {
+/** Opens VLC for live view. */
+function liveViewCamera(cameraName) { eel.open_camera_live_view(cameraName)(); }
 
-}
-
-function liveViewCamera(cameraName) {
-    eel.open_camera_live_view(cameraName)
-}
-
+/** Starts recording for a single camera. */
 async function startCamera(cameraName) {
-    let dir = await eel.create_recording_dir(cameraName)();
-    if (!dir) {
-        document.getElementById('error-message').innerText = 'Error, could not create a recording directory.'
-        let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
-        errorModal.show()
-    }
-
-    let res = await eel.start_camera_stream(cameraName, dir, 600)();
-    if (res) {
-        let buttons = document.getElementById('before-recording-' + cameraName)
-        buttons.style.visibility = 'hidden';
-
-        buttons = document.getElementById('during-recording-' + cameraName)
-        buttons.style.visibility = 'visible';
-
-    } else {
-        document.getElementById('error-message').innerText = cameraName + ' is already being recorded.'
-        let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
-        errorModal.show()
-    }
-
-    updateStatusModalIcon();
+    try {
+        const dir = await eel.create_recording_dir(cameraName)();
+        if (!dir) { showErrorOnRecordPage('Could not create recording directory for ' + cameraName); return; }
+        const success = await eel.start_camera_stream(cameraName, dir, 600)();
+        if (success) {
+            document.getElementById(`before-recording-${cameraName}`).style.display = 'none';
+            document.getElementById(`during-recording-${cameraName}`).style.display = 'flex';
+        } else { showErrorOnRecordPage(`'${cameraName}' might be recording or error occurred.`); }
+        await updateStatusIcon();
+    } catch (e) { console.error(`Start ${cameraName} error:`, e); }
 }
 
+/** Stops recording for a single camera. */
 async function stopCamera(cameraName) {
-    let res = await eel.stop_camera_stream(cameraName)()
-
-    if (res) {
-        let buttons = document.getElementById('during-recording-' + cameraName)
-        buttons.style.visibility = 'hidden';
-
-        buttons = document.getElementById('before-recording-' + cameraName)
-        buttons.style.visibility = 'visible';
-    } else {
-        document.getElementById('error-message').innerText = 'Error, could not stop recording.'
-        let errorModal = new bootstrap.Modal(document.getElementById('errorModal'))
-        errorModal.show()
-    }
-
-    updateStatusModalIcon();
+    try {
+        const success = await eel.stop_camera_stream(cameraName)();
+        if (success) {
+            document.getElementById(`during-recording-${cameraName}`).style.display = 'none';
+            document.getElementById(`before-recording-${cameraName}`).style.display = 'flex';
+        } else { showErrorOnRecordPage(`Could not stop ${cameraName}. Not recording?`); }
+        await updateStatusIcon();
+    } catch (e) { console.error(`Stop ${cameraName} error:`, e); }
 }
 
+/** Starts all cameras. */
 async function startAllCameras() {
-    let cameras = await eel.get_camera_list()();
-
-    const promises = cameras.map(([cameraName, _]) => startCamera(cameraName));
-    await Promise.all(promises);
-
-    await updateCamButtons()
+    try {
+        const cameras = await eel.get_camera_list()();
+        if (cameras && cameras.length > 0) {
+            for (const [name, _] of cameras) await startCamera(name); // Sequential
+            await updateCamButtons(); // Update all buttons after attempting all starts
+        } else { alert("No cameras configured."); }
+    } catch (e) { console.error("Start all error:", e); }
 }
 
+/** Stops all cameras. */
 async function stopAllCameras() {
-    let cameras = await eel.get_camera_list()();
-
-    const promises = cameras.map(([cameraName, _]) => stopCamera(cameraName));
-    await Promise.all(promises);
-
-    await updateCamButtons()
+    try {
+        const cameras = await eel.get_camera_list()();
+        if (cameras && cameras.length > 0) {
+            for (const [name, _] of cameras) await stopCamera(name); // Sequential
+            await updateCamButtons();
+        } else { alert("No cameras configured."); }
+    } catch (e) { console.error("Stop all error:", e); }
 }
 
-loadCameras();
-
-window.addEventListener("unload", function (e) {
-    if (!routing) {
-        eel.kill_streams();
-    }
+// Initial Page Load
+document.addEventListener('DOMContentLoaded', () => {
+    loadCameras();
+    setInterval(updateStatusIcon, 3000); 
+    // Assign event listener to the "Add Camera" submit button in the modal
+    const addCamSubmitBtn = document.getElementById('addCameraButton'); // Assuming this ID for the submit button in addCamera modal
+    if(addCamSubmitBtn) addCamSubmitBtn.onclick = addCameraSubmit;
 });
 
-window.onbeforeunload = function () {
-    if (!routing) {
-        eel.kill_streams();
-    }
-}
+// Unload Handlers
+window.addEventListener("unload", () => {
+    if (!routingInProgress) { if (typeof eel !== 'undefined' && eel.kill_streams) eel.kill_streams()().catch(err => console.error("Unload kill_streams error:", err)); }
+});
+window.onbeforeunload = () => {
+    if (!routingInProgress) { if (typeof eel !== 'undefined' && eel.kill_streams) eel.kill_streams()().catch(err => console.error("Beforeunload kill_streams error:", err)); }
+    // return null; 
+};
 
-window.setInterval(function () {
-    eel.get_progress_update()
-}, 1000)
-
-/* TODO: Rewrite the inference loading bar. */
+/** Exposed to Python: Updates the inference progress bar. */
 eel.expose(inferLoadBar);
-function inferLoadBar(progresses) {
+function inferLoadBar(progresses) { 
+    const barContainer = document.getElementById('inference-bar-container'); 
+    const barElement = document.getElementById('inference-bar');
+    if (!barContainer || !barElement) return;
 
+    if (progresses && Array.isArray(progresses) && progresses.length > 0) {
+        barContainer.style.visibility = 'visible';
+        barElement.innerHTML = ''; 
 
-    if (progresses) {
-
-        let num = (1 / progresses.length) * 100
-        let elem = document.getElementById('inference-bar');
-        elem.style.visibility = 'visible'
-        elem.innerHTML = ''
-
-        for (i = 0; i < progresses.length; i++) {
-            if (i < progresses.length - 1 && progresses[i] != 0) {
-                if (progresses[i] < 0) {
-                    elem.innerHTML += `<div class="progress-bar progress-bar-striped progress-bar-animated bg-danger" role="progressbar" style="width: ` + num + `%; border-right: 1px solid white" aria-valuenow="10" aria-valuemin="0" aria-valuemax="100"></div>`
-                } else {
-                    elem.innerHTML += `<div class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: ` + progresses[i] + `%; border-right: 1px solid white" aria-valuenow="10" aria-valuemin="0" aria-valuemax="100"></div>`
-                }
-            } else {
-                if (progresses[i] < 0) {
-                    elem.innerHTML += `<div class="progress-bar progress-bar-striped progress-bar-animated bg-danger" role="progressbar" style="width: ` + num + `%" aria-valuenow="10" aria-valuemin="0" aria-valuemax="100"></div>`
-                } else {
-                    elem.innerHTML += `<div class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: ` + progresses[i] + `%" aria-valuenow="10" aria-valuemin="0" aria-valuemax="100"></div>`
-                }
+        progresses.forEach((progressValue) => {
+            const segment = document.createElement('div');
+            segment.classList.add('progress-bar', 'progress-bar-striped', 'progress-bar-animated');
+            let widthPercent = Math.max(0, Math.min(100, progressValue)); // Clamp between 0 and 100
+            let bgColorClass = 'bg-success';
+            if (progressValue < 0) { // Error
+                bgColorClass = 'bg-danger';
+                widthPercent = (1 / progresses.length) * 100; // Error takes up its share of space
             }
-        }
-
+            segment.classList.add(bgColorClass);
+            segment.style.width = `${widthPercent}%`;
+            segment.setAttribute('aria-valuenow', widthPercent);
+            barElement.appendChild(segment);
+        });
     } else {
-
-        window.setTimeout(function () {
-            let elem = document.getElementById('inference-bar');
-            elem.style.visibility = 'hidden'
-        }, 1000)
+        barContainer.style.visibility = 'hidden';
+        barElement.innerHTML = '';
     }
-
 }

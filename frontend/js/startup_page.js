@@ -1,4 +1,12 @@
-blurbs = [
+/**
+ * @file startup_page.js
+ * Handles the logic for the project startup page, including creating new projects
+ * and opening existing ones. Interacts with Electron's IPC for file dialogs
+ * and uses Eel to communicate with the Python backend.
+ */
+
+// Array of fun blurbs and corresponding links to display on the startup page
+const blurbs = [
     "eel included",
     "electronic!",
     "thanks Yann",
@@ -7,7 +15,7 @@ blurbs = [
     "around the clock",
 ];
 
-links = [
+const links = [
     "https://github.com/python-eel/Eel",
     "https://www.electronjs.org/",
     "https://ai.meta.com/blog/self-supervised-learning-the-dark-matter-of-intelligence/",
@@ -16,111 +24,191 @@ links = [
     "https://en.wikipedia.org/wiki/Circadian_rhythm",
 ];
 
-let fb = document.getElementById("fun-blurb-text");
+let funBlurbElement = document.getElementById("fun-blurb-text");
+if (funBlurbElement) {
+    let randomIndex = Math.floor(Math.random() * blurbs.length);
+    funBlurbElement.innerHTML = blurbs[randomIndex];
+    funBlurbElement.href = links[randomIndex];
+}
 
-let index = Math.floor(Math.random() * blurbs.length);
-fb.innerHTML = blurbs[index];
-fb.href = links[index];
+// IPC renderer for communication with Electron main process (e.g., for file dialogs)
+const ipc = window.ipcRenderer; // Ensure this is available if running in Electron
 
-const ipc = window.ipcRenderer;
+// DOM Elements
+const createProjectButton = document.getElementById("create");
+const openProjectButton = document.getElementById("open");
+const errorModalElement = document.getElementById("errorModal");
+const errorMessageElement = document.getElementById("error-message");
+let bootstrapErrorModal = errorModalElement ? new bootstrap.Modal(errorModalElement) : null;
 
-const createBtn = document.getElementById("create");
-const openBtn = document.getElementById("open");
 
-/* We use the same ipc file picker for both creating and opening a 
- * project, so we distinguish which one we are doing with this flag
+/**
+ * Flag to distinguish file picker mode:
+ * 0 for selecting a parent directory to create a new project.
+ * 1 for selecting an existing project directory to open.
+ * @type {number}
  */
-let filePickerMode = 0; // 0 for create, 1 for open
+let filePickerMode = 0;
 
-let routing = false;
+/**
+ * Flag to prevent `kill_streams` from being called during intentional page navigation.
+ * @type {boolean}
+ */
+let routingInProgress = false;
 
-function routeRecord() {
-    routing = true;
-    window.open("./record.html", "_self");
-}
-function routeLabelTrain() {
-    routing = true;
-    window.open("./label-train.html", "_self");
-}
-
-function routeVisualize() {
-    routing = true;
-    window.open("./visualize.html", "_self");
-}
-
-createBtn.addEventListener("click", function (event) {
-    filePickerMode = 0;
-    ipc.send("open-file-dialog");
-});
-
-openBtn.addEventListener("click", function (event) {
-    filePickerMode = 1;
-    ipc.send("open-file-dialog");
-});
-
-async function createProject() {
-    let parentDirectory = document.getElementById("parent-directory").innerHTML;
-    let projectName = document.getElementById("project-name").value;
-
-    let result = await eel.create_project(parentDirectory, projectName)();
-
-    let projectExists = result[0];
-    let dict = result[1];
-
-    if (projectExists) {
-        let project_dict = dict;
-        window.localStorage.setItem("project", JSON.stringify(project_dict));
-        routeRecord();
+/** Shows the error modal with a custom message. */
+function showErrorOnStartup(message) {
+    if (errorMessageElement && bootstrapErrorModal) {
+        errorMessageElement.innerText = message;
+        bootstrapErrorModal.show();
     } else {
-        let modal = new bootstrap.Modal(document.getElementById("errorModal"));
-        document.getElementById("error-message").innerHTML =
-            "Project could not be created. Check if the entered project already exists.";
-        modal.show();
+        alert(message); // Fallback if Bootstrap modal isn't available
     }
 }
 
-// This is called when a user selects a directory.
-ipc.on("selected-directory", async (_event, path) => {
-    // The user cancelled
-    if (path == null) {
+/** Navigates to the record page. */
+function routeToRecordPage() {
+    routingInProgress = true;
+    window.location.href = "./record.html";
+}
+
+// Event listener for the "Create Project" button
+if (createProjectButton) {
+    createProjectButton.addEventListener("click", function () {
+        filePickerMode = 0;
+        if (ipc) { // Send IPC message only if ipc is available (Electron context)
+            ipc.send("open-file-dialog");
+        } else {
+            showErrorOnStartup("File dialog functionality is not available (not in Electron?).");
+        }
+    });
+}
+
+// Event listener for the "Open Project" button
+if (openProjectButton) {
+    openProjectButton.addEventListener("click", function () {
+        filePickerMode = 1;
+        if (ipc) {
+            ipc.send("open-file-dialog");
+        } else {
+            showErrorOnStartup("File dialog functionality is not available (not in Electron?).");
+        }
+    });
+}
+
+/**
+ * Handles the creation of a new project after the user has selected a parent directory
+ * and entered a project name in the modal.
+ */
+async function handleCreateProjectSubmit() {
+    const parentDirDisplay = document.getElementById("parent-directory");
+    const projectNameInput = document.getElementById("project-name");
+
+    if (!parentDirDisplay || !projectNameInput) {
+        showErrorOnStartup("Internal UI error: Create project modal elements are missing.");
         return;
     }
 
-    if (filePickerMode == 0) {
-        // They selected a parent directory, now let them create a new project
-        let modal = new bootstrap.Modal(document.getElementById("createModal"));
-        document.getElementById("parent-directory").innerHTML = path;
-        modal.show(); // The createProject callback is called from the modal HTML
-    } else {
-        let result = await eel.load_project(path)();
-        let projectExists = result[0];
-        let dict = result[1];
+    let parentDirectoryPath = parentDirDisplay.innerText; // Use innerText as it's displaying the path
+    let projectNameValue = projectNameInput.value;
 
-        if (projectExists) {
-            let project_dict = dict;
-            window.localStorage.setItem("project", JSON.stringify(project_dict));
-            routeRecord();
+    if (!projectNameValue.trim()) {
+        showErrorOnStartup("Project name cannot be empty.");
+        return;
+    }
+
+    try {
+        console.log(`Attempting to create project: ${projectNameValue} in ${parentDirectoryPath}`);
+        const result = await eel.create_project(parentDirectoryPath, projectNameValue)();
+        const projectCreated = result[0];
+        const projectDetailsDict = result[1];
+
+        if (projectCreated && projectDetailsDict) {
+            window.localStorage.setItem("project", JSON.stringify(projectDetailsDict));
+            console.log("Project created and stored in localStorage. Routing to record page.");
+            routeToRecordPage();
         } else {
-            // show error modal
-            let modal = new bootstrap.Modal(
-                document.getElementById("errorModal")
-            );
-            document.getElementById("error-message").innerHTML =
-                "Project does not exist.";
-            modal.show();
+            showErrorOnStartup("Project could not be created. It might already exist or the name is invalid.");
+        }
+    } catch (error) {
+        console.error("Error during eel.create_project call:", error);
+        showErrorOnStartup(`An error occurred: ${error.message || "Unknown error creating project."}`);
+    }
+}
+
+// Listener for the 'selected-directory' event from the Electron main process (file dialog response)
+if (ipc) {
+    ipc.on("selected-directory", async (_event, selectedPath) => {
+        if (selectedPath == null) { // User cancelled the dialog
+            console.log("Directory selection cancelled.");
+            return;
+        }
+        console.log(`Directory selected: ${selectedPath}, mode: ${filePickerMode}`);
+
+        if (filePickerMode === 0) { // Create project mode: path is parent directory
+            const createModalElement = document.getElementById("createModal");
+            const parentDirDisplayElement = document.getElementById("parent-directory");
+            if (createModalElement && parentDirDisplayElement) {
+                let modal = new bootstrap.Modal(createModalElement);
+                parentDirDisplayElement.innerText = selectedPath;
+                document.getElementById("project-name").value = ""; // Clear previous project name
+                modal.show();
+                // Actual project creation is triggered by a button within this modal that calls handleCreateProjectSubmit()
+            } else {
+                console.error("Create project modal elements not found.");
+            }
+        } else { // Open project mode (filePickerMode === 1): path is project directory
+            try {
+                console.log(`Attempting to load project: ${selectedPath}`);
+                const result = await eel.load_project(selectedPath)();
+                const projectLoaded = result[0];
+                const projectDetailsDict = result[1];
+
+                if (projectLoaded && projectDetailsDict) {
+                    window.localStorage.setItem("project", JSON.stringify(projectDetailsDict));
+                    console.log("Project loaded and stored in localStorage. Routing to record page.");
+                    routeToRecordPage();
+                } else {
+                    showErrorOnStartup("Selected directory is not a valid CBAS project or could not be loaded.");
+                }
+            } catch (error) {
+                console.error("Error during eel.load_project call:", error);
+                showErrorOnStartup(`An error occurred while loading the project: ${error.message || "Unknown error loading project."}`);
+            }
+        }
+    });
+}
+
+
+/**
+ * Event listener for page unload. Attempts to call a Python function to clean up
+ * (e.g., stop FFMPEG streams) if the unload is not due to intentional routing.
+ */
+window.addEventListener("unload", function () {
+    if (!routingInProgress) {
+        console.log("StartupPage: Unload event (not routing). Attempting to call eel.kill_streams.");
+        if (typeof eel !== 'undefined' && typeof eel.kill_streams === 'function') {
+            eel.kill_streams()().catch(err => console.error("Error in eel.kill_streams on unload:", err));
         }
     }
 });
 
-// This is essentially black magic
-window.addEventListener("unload", function (e) {
-    if (!routing) {
-        eel.kill_streams();
-    }
-});
-
+/**
+ * Fallback for `onbeforeunload` to ensure cleanup attempt.
+ */
 window.onbeforeunload = function () {
-    if (!routing) {
-        eel.kill_streams();
+    if (!routingInProgress) {
+        console.log("StartupPage: Beforeunload event (not routing). Attempting to call eel.kill_streams.");
+        if (typeof eel !== 'undefined' && typeof eel.kill_streams === 'function') {
+            eel.kill_streams()().catch(err => console.error("Error in eel.kill_streams on beforeunload:", err));
+        }
     }
+    // To prevent the default browser confirmation dialog, return undefined or nothing.
+    // If you want a confirmation, return a string: return "Are you sure you want to leave?";
 };
+
+// Assign createProject to the modal's save button if it exists
+const createProjectModalButton = document.querySelector('#createModal .btn-primary');
+if (createProjectModalButton) {
+    createProjectModalButton.onclick = handleCreateProjectSubmit;
+}

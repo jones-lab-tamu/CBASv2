@@ -2,7 +2,7 @@
 <html>
 
 <head>
-  <title>CBASv2/Label</title>
+  <title>CBAS/Label</title>
 
   <script type="text/javascript" src="/eel.js"></script>
 
@@ -28,28 +28,26 @@
 
   <nav class="navbar navbar-expand-sm navbar-dark bg-tertiary" style="padding-bottom:50px">
     <div class="container-fluid">
-      <a class="navbar-brand" href="index.html">CBASv2</a>
+      <a class="navbar-brand" href="index.html">CBAS</a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
         aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
         <span class="navbar-toggler-icon"></span>
-      </button>
+      </button>      
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav">
           <li class="nav-item">
-            <button class="nav-link" onclick="routeRecord()">Record</button>
+            <button class="nav-link" onclick="routeToRecordPage()">Record</button>
           </li>
           <li class="nav-item">
-            <button class="nav-link text-white" onclick="routeLabelTrain()">Label/Train</button>
+            <button class="nav-link text-white" onclick="routeToLabelTrainPage()">Label/Train</button>
           </li>
           <li class="nav-item">
-            <button class="nav-link" onclick="routeVisualize()">Visualize</button>
+            <button class="nav-link" onclick="routeToVisualizePage()">Visualize</button>
           </li>
         </ul>
       </div>
     </div>
   </nav>
-
-
 
   <div class="modal" tabindex="-1" id="addDataset">
     <div class="modal-dialog modal-dialog-centered">
@@ -60,20 +58,18 @@
         </div>
         <div class="modal-body">
           <p>Name: </p>
-          <input type="text" class="form-control" id="dataset-name" aria-describedby="directory"
+          <input type="text" class="form-control" id="dataset-name-modal-input" aria-describedby="directory"
             placeholder="e.g. dataset1" style="margin-bottom: 10px">
           <p>Behaviors: </p>
-          <input type="text" class="form-control" id="dataset-behaviors" aria-describedby="directory"
+          <input type="text" class="form-control" id="dataset-behaviors-modal-input" aria-describedby="directory"
             placeholder="e.g. eating; drinking; background" style="margin-bottom: 10px">
-
           <p>Directories to label: </p>
           <div id="ad-recording-tree">
           </div>
-
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-          <button type="button" class="btn btn-primary" onclick="createDataset()">Create</button>
+          <button type="button" class="btn btn-primary" id="createDatasetButton">Create</button>
         </div>
       </div>
     </div>
@@ -95,7 +91,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-          <button type="button" class="btn btn-primary" onclick="startClassification()">Start</button>
+          <button type="button" class="btn btn-primary" id="startClassificationButton">Start</button>
         </div>
       </div>
     </div>
@@ -109,9 +105,19 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
-
           <div class="container">
-            <div class="row justify-content-center align-items-center g-2">
+		  
+			<div class="row mb-3">
+            <div class="col">
+              <label for="tm-method" class="form-label">Training Method:</label>
+              <select class="form-select" id="tm-method">
+                <option value="oversampling" selected>Balanced Sampling (Oversampling)</option>
+                <option value="weighted_loss">Weighted Loss</option>
+              </select>
+            </div>
+          </div>
+		  
+		  <div class="row justify-content-center align-items-center g-2">
               <div class="col">
                 <p>Sequence Length: </p>
                 <input type="number" class="form-control" id="tm-seqlen" aria-describedby="directory" value="31"
@@ -136,11 +142,10 @@
               </div>
             </div>
           </div>
-
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-          <button type="button" class="btn btn-primary" onclick="trainModel()">Train</button>
+          <button type="button" class="btn btn-primary" id="trainModelButton">Train</button>
         </div>
       </div>
     </div>
@@ -163,77 +168,65 @@
     </div>
   </div>
 
-
   <div id="datasets" style="display: block;">
     <div class="container align-items-center justify-content-center">
       <div class="col" id="dataset-container">
-
-
       </div>
     </div>
-
     <div class="fab-container-right">
-      <!-- Create Button -->
-      <div class="fab" onclick="showDatasetModal()">
+      <div class="fab" onclick="showAddDatasetModal()">
         <i class="bi bi-plus-lg" style="font-size: 50px"></i>
       </div>
     </div>
   </div>
 
   <div class="d-flex col align-items-center justify-content-center" style="height: max-content; width: 100vw;">
-
     <div class="card text-start" id="label"
-      style="height: 700px; width: 95vw; min-width: 750px; display: none;background-color: #343a40;">
-
-      <div class="card-body d-flex col align-items-center justify-content-center" style="padding: 10px;">
-        <div class="container-fluid">
-        <div id="file-info" class="row justify-content-center text-light"></div>
-          <div class="row" style="padding-bottom: 10px;">
-            <div class="col">
-              <div id="img-section">
-                <img id="label-image" src="" alt="" style="border:2px solid black;" draggable="false">
-              </div>
+      style="height: 700px; width: 95vw; min-width: 750px; display: none; background-color: #343a40;">
+      <div class="card-body d-flex flex-column" style="padding: 10px;">
+        <div id="file-info" class="row justify-content-center text-light mb-2"></div>
+        <div class="row flex-grow-1">
+          <div class="col-md-8 d-flex justify-content-center align-items-center">
+            <div id="img-section">
+              <img id="label-image" src="" alt="" style="border:2px solid black; max-width: 100%; max-height: 100%; object-fit: contain;" draggable="false">
             </div>
-            <div class="col">
-              <div id="controls" style="min-width: 156px;">
-
-              </div>
-            </div>
-
           </div>
-
+          <div class="col-md-4">
+            <div id="controls" style="min-width: 156px;">
+            </div>
+          </div>
         </div>
-        <div id="controls">
-
-        </div>
-
       </div>
     </div>
+  </div>
 
+  <div id="labeling-cheat-sheet" class="container text-light mt-3" style="display: none; max-width: 95vw; min-width: 750px;">
+    <div class="card bg-dark">
+      <div class="card-header">
+        <h5>Labeling Controls</h5>
+      </div>
+      <div class="card-body" style="font-size: 0.9rem;">
+        <div class="row">
+          <div class="col-md-6">
+            <ul class="list-unstyled">
+              <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame</li>
+              <li><kbd>↑</kbd> / <kbd>↓</kbd> : Double / Halve scrub speed</li>
+              <li><kbd>Click Timeline</kbd> : Jump to frame</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <ul class="list-unstyled">
+              <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Previous / Next video</li>
+              <li><kbd>Backspace</kbd> : Undo last added label</li>
+              <li><kbd>Delete</kbd> : Delete label at current frame</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="text/javascript" src="js/label_train_page.js"></script>
-  <!-- Loading Spinner Overlay -->
-  <div id="loading-spinner" class="spinner-overlay d-none">
-    <div class="spinner-border text-warning" role="status" style="width: 4rem; height: 4rem;">
-      <span class="visually-hidden">Loading...</span>
-    </div>
-  </div>
-
-  <style>
-    .spinner-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      background-color: rgba(0, 0, 0, 0.5);
-      z-index: 2000;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-  </style>
 </body>
 
 </html>
