@@ -17,3 +17,10 @@ deactivate/
 # ==================================
 .vs/
 .vscode/
+
+# ==================================
+# Node.js / npm
+# ==================================
+node_modules/
+package-lock.json
+package.json
