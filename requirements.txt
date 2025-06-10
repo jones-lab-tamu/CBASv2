@@ -8,6 +8,10 @@
 # --- Core Backend & Application ---
 Eel             # ==0.16.0
 PyYAML          # ==6.0.1
+bottle
+bottle-websocket
+gevent
+gevent-websocket
 
 # --- Machine Learning & Data Processing ---
 # Note: torch and transformers versions are usually linked.
