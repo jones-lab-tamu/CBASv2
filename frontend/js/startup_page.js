@@ -81,6 +81,7 @@ async function handleCreateProjectSubmit() {
     }
 
     try {
+        // Eel call remains the same
         const [isCreated, projectDetails] = await eel.create_project(parentDir, projectName)();
         if (isCreated && projectDetails) {
             window.localStorage.setItem("project", JSON.stringify(projectDetails));
@@ -96,10 +97,9 @@ async function handleCreateProjectSubmit() {
 
 /**
  * Handles the response from the Electron main process after a directory has been selected.
- * @param {object} _event - The IPC event object (unused).
  * @param {string | null} selectedPath - The path chosen by the user, or null if cancelled.
  */
-async function onDirectorySelected(_event, selectedPath) {
+async function onDirectorySelected(selectedPath) {
     if (!selectedPath) {
         console.log("Directory selection was cancelled.");
         return;
@@ -134,18 +134,14 @@ async function onDirectorySelected(_event, selectedPath) {
 // EVENT LISTENERS
 // =================================================================
 
-// --- IPC Listener (from Electron Main Process) ---
-// This requires `contextIsolation: false` and `nodeIntegration: true` in the Electron window setup.
-// If `window.ipcRenderer` is not available, these event listeners will not attach.
-try {
-    const ipc = window.ipcRenderer;
-    if (ipc) {
-        ipc.on("selected-directory", onDirectorySelected);
-    } else {
-        console.warn("`ipcRenderer` not found. File dialogs will not work outside of a full Electron context.");
-    }
-} catch (error) {
-    console.warn("Could not attach IPC listeners. Running in a standard browser?");
+// --- IPC Listener (from Electron Main Process via Preload Script) ---
+// This is the new, secure way to handle IPC.
+// The `window.electronAPI` object is created by `preload.js`.
+if (window.electronAPI) {
+    console.log("Preload script's `electronAPI` found. Attaching IPC listener.");
+    window.electronAPI.on("selected-directory", onDirectorySelected);
+} else {
+    console.warn("`electronAPI` not found. File dialogs will not work. Check that the preload script is configured correctly in main.js.");
 }
 
 
@@ -154,13 +150,14 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeFunBlurb();
 
     // Attach listeners to the main project selection buttons
+    // These now use the new `electronAPI` object to send messages to main.js
     document.getElementById("create")?.addEventListener("click", () => {
         filePickerMode = 0;
-        window.ipcRenderer?.send("open-file-dialog");
+        window.electronAPI?.send("open-file-dialog");
     });
     document.getElementById("open")?.addEventListener("click", () => {
         filePickerMode = 1;
-        window.ipcRenderer?.send("open-file-dialog");
+        window.electronAPI?.send("open-file-dialog");
     });
 
     // Attach listener to the modal's "Create" button

@@ -1,26 +1,17 @@
-node_modules/
+# Python
 venv/
-dist/
-build/
-*.pyc
-
-# ==================================
-# Python Caches & Virtual Environments
-# ==================================
+.venv/
 __pycache__/
-venv/
-deactivate/
 *.pyc
 
-# ==================================
-# Editor-specific files
-# ==================================
-.vs/
-.vscode/
-
-# ==================================
-# Node.js / npm
-# ==================================
+# Node.js
 node_modules/
-package-lock.json
-package.json
+npm-debug.log
+
+# IDE / Editor folders
+.vscode/
+.idea/
+
+# OS-generated files
+.DS_Store
+Thumbs.db

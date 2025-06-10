@@ -1,21 +1,21 @@
 """
-Main entry point for the CBAS application.
+Main entry point for the CBAS application backend.
 
 This script is responsible for:
-1.  Finding an available network port for communication.
-2.  Locating the Electron executable.
-3.  Initializing the Eel library.
-4.  Starting the background worker threads.
-5.  Launching the Electron GUI process.
-6.  Running the main application loop to keep the Python backend alive.
-7.  Handling graceful shutdown of worker threads on exit.
+1.  Initializing and starting all background worker threads.
+2.  Starting a web server using Bottle and Gevent-WebSocket to communicate
+    with the Electron frontend.
+3.  Exposing Python functions to be called from the frontend JavaScript.
 """
+
+# --- Suppress the specific DeprecationWarning from pkg_resources ---
+import warnings
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 
 # Standard library imports
 import os
 import sys
 import socket
-import subprocess
 
 # Local application imports
 import eel
@@ -55,82 +55,38 @@ def find_available_port(start_port=8000, max_tries=100) -> int:
 
 
 def main():
-    """Main function to initialize and start the Eel application."""
-    
-    # --- 1. Set up the Eel environment ---
-    frontend_dir = "frontend"
-    if not os.path.isdir(frontend_dir):
-        # Handle case where backend is run from a different directory
-        script_dir = os.path.dirname(__file__)
-        frontend_dir = os.path.join(script_dir, '..', 'frontend')
-        if not os.path.isdir(frontend_dir):
-            print(f"Error: Cannot find 'frontend' directory.", file=sys.stderr)
-            sys.exit(1)
-            
-    eel.init(frontend_dir)
+    """Initializes the backend server and waits for the Electron app to connect."""
 
-    # --- 2. Find an available port ---
-    try:
-        port = find_available_port()
-        print(f"Eel will run on http://localhost:{port}/index.html")
-    except IOError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    # Eel needs to know where the 'frontend' folder is to find eel.js
+    eel.init('frontend')
 
-    # --- 3. Locate the Electron executable ---
-    # This path assumes a standard `npm install` setup.
-    electron_path = os.path.join("node_modules", "electron", "dist", "electron")
-    if sys.platform == "win32":
-        electron_path += ".exe"
-    electron_path = os.path.abspath(electron_path)
-
-    if not os.path.exists(electron_path):
-        print("Warning: Electron executable not found.", file=sys.stderr)
-        print(f"  - Searched at: {electron_path}", file=sys.stderr)
-        print("  - Application will attempt to open in the default web browser instead.", file=sys.stderr)
-
-    eel.browsers.set_path('electron', electron_path)
-
-    # --- 4. Start Background Worker Threads ---
-    print("Starting background worker threads...")
+    # Start all background processing threads (encoding, training, etc.)
     workthreads.start_threads()
 
-    # --- 5. Launch the Application GUI ---
-    eel_options = {
-        'mode': 'electron',
-        'host': 'localhost',
-        'port': port,
-        'app_mode': True,  # Important for packaging with tools like PyInstaller
-    }
-    
-    print("Launching GUI...")
-    try:
-        eel.start("index.html", options=eel_options, block=False, suppress_error=True)
-    except Exception as e:
-        # Fallback to browser mode if Electron fails for any reason
-        print(f"Could not start in Electron mode: {e}", file=sys.stderr)
-        print("Attempting to start in default browser instead...")
-        try:
-            eel.start("index.html", mode=None, port=port, block=False)
-        except Exception as browser_e:
-            print(f"Could not start Eel in any mode: {browser_e}", file=sys.stderr)
-            workthreads.stop_threads()
-            sys.exit(1)
+    # Find a free port for the web server to run on.
+    port = find_available_port()
 
-    # --- 6. Run Main Application Loop ---
-    # This loop keeps the Python script running while the GUI is open.
-    # eel.sleep() allows Eel to process communications between Python and JS.
+    print(f"Eel server starting on http://localhost:{port}")
+    print("This server will wait for the Electron GUI to connect.")
+
     try:
-        while True:
-            eel.sleep(1.0)
-    except (KeyboardInterrupt, SystemExit, MemoryError):
-        # A MemoryError in the main loop might mean the GUI process crashed.
-        print("Main application loop interrupted. Shutting down...")
+        # Start the Eel server.
+        # This is the final, correct configuration for a decoupled Electron app.
+        eel.start(
+            'index.html',     # A required placeholder; the page is not actually opened by this call.
+            mode=None,        # CRITICAL: This tells Eel NOT to launch any browser or window.
+            host='localhost', # Listen only on the local machine.
+            port=port,        # The port the server will run on.
+            block=True        # CRITICAL: This keeps the Python script alive until the app is closed.
+        )
+    except (SystemExit, MemoryError, KeyboardInterrupt):
+        # This block will be executed when the Electron app closes, which kills this process.
+        print("Shutdown signal received, Python process is terminating.")
     finally:
-        print("Cleaning up: Stopping all worker threads...")
+        # Ensure worker threads are stopped cleanly on exit.
         workthreads.stop_threads()
-        print("Cleanup complete. Exiting.")
 
 
 if __name__ == "__main__":
+    # This ensures the main() function is called only when the script is executed directly.
     main()
