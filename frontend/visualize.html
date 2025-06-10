@@ -112,11 +112,15 @@
                     
                     <!-- Actogram Image Display -->
                     <div class="text-center mt-3">
-                      <div id="loading-spinner-actogram" class="spinner-border text-light" role="status" style="display: none;">
-                        <span class="visually-hidden">Loading...</span>
-                      </div>
-                      <img id="actogram-image" src="assets/noData.png" alt="Actogram will be displayed here" style="display: block; max-width: 100%; border: 1px solid #444;">
-                    </div>
+					  <div id="loading-spinner-actogram" class="spinner-border text-light" role="status" style="display: none;">
+						<span class="visually-hidden">Loading...</span>
+					  </div>
+					  <!-- THIS IS THE NEW CONTAINER -->
+					  <div id="actogram-container" class="row g-3 justify-content-center">
+						<!-- Actograms will be dynamically inserted here by JS -->
+						<img id="actogram-placeholder" src="assets/noData.png" alt="Actogram will be displayed here" style="display: block; max-width: 100%; border: 1px solid #444;">
+					  </div>
+					</div>
                   </div>
                 </div>
               </div>

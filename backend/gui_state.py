@@ -111,3 +111,9 @@ recording_observer: Union['Observer', None] = None
 
 cur_actogram: Union[cbas.Actogram, None] = None
 """The currently generated cbas.Actogram object being displayed on the Visualize page."""
+
+# Task Management for Visualization
+viz_task_lock: Union[threading.Lock, None] = threading.Lock()
+"""A lock to ensure thread-safe access to the visualization task ID."""
+latest_viz_task_id: int = 0
+"""The ID of the most recently requested visualization task. Used to discard obsolete results."""

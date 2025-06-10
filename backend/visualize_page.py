@@ -53,101 +53,74 @@ def get_recording_tree() -> list:
     
     return dates_list
 
-
 @eel.expose
-def make_actogram(root: str, sub_dir: str, model: str, behavior: str, framerate: str,
-                  binsize_from_gui: str, start: str, threshold: str, lightcycle: str,
-                  plot_acrophase: bool):
+def generate_actograms(root: str, sub_dir: str, model: str, behaviors: list, framerate: str,
+                       binsize_from_gui: str, start: str, threshold: str, lightcycle: str,
+                       plot_acrophase: bool, task_id: int):
     """
-    Creates a new Actogram instance based on UI parameters and sends the
-    resulting image blob back to the frontend.
-
-    Args:
-        root (str): The date directory name (e.g., '20250101').
-        sub_dir (str): The session directory name (e.g., 'Camera1-120000-PM').
-        model (str): The name of the model whose classifications to use.
-        behavior (str): The specific behavior to plot.
-        framerate (str): The video framerate.
-        binsize_from_gui (str): The bin size in minutes.
-        start (str): The start hour for the plot (0-24).
-        threshold (str): The probability threshold for an event (1-100).
-        lightcycle (str): The light cycle pattern ('LD', 'LL', or 'DD').
-        plot_acrophase (bool): Whether to calculate and plot the acrophase.
+    Creates Actograms for each behavior and sends results back to the frontend.
+    This function is stateful and will only return results for the most recent task_id.
     """
-    print(f"make_actogram called for: {root}/{sub_dir} | {model} - {behavior}")
+    
+    # Immediately update the global task ID. This marks all previous tasks as obsolete.
+    with gui_state.viz_task_lock:
+        gui_state.latest_viz_task_id = task_id
+    
+    print(f"Starting actogram task {task_id} for: {behaviors}")
+    
+    color_map = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    results = []
+    
     try:
-        # --- Parameter Parsing and Validation ---
         framerate_val = int(framerate)
         binsize_minutes_val = int(binsize_from_gui)
         start_val = float(start)
         threshold_val = float(threshold) / 100.0
         
-        # Ensure the specified recording exists in the project state
         recording = gui_state.proj.recordings.get(root, {}).get(sub_dir)
         if not recording or not os.path.isdir(recording.path):
-            print(f"Error: Recording path does not exist for {root}/{sub_dir}")
-            eel.updateActogramDisplay(None)()
-            return
+            raise FileNotFoundError(f"Recording path does not exist for {root}/{sub_dir}")
 
-        # --- Actogram Creation ---
-        gui_state.cur_actogram = cbas.Actogram(
-            directory=recording.path,
-            model=model,
-            behavior=behavior,
-            framerate=framerate_val,
-            start=start_val,
-            binsize_minutes=binsize_minutes_val,
-            threshold=threshold_val,
-            lightcycle=lightcycle,
-            plot_acrophase=plot_acrophase
-        )
+        all_model_behaviors = gui_state.proj.models[model].config.get("behaviors", [])
 
-        # --- Send Result to Frontend ---
-        if gui_state.cur_actogram and gui_state.cur_actogram.blob:
-            eel.updateActogramDisplay(gui_state.cur_actogram.blob)()
+        for behavior_name in behaviors:
+            # Check if this task has been superseded before starting heavy work
+            with gui_state.viz_task_lock:
+                if task_id != gui_state.latest_viz_task_id:
+                    print(f"Cancelling sub-task for '{behavior_name}' in obsolete task {task_id}.")
+                    return # Exit the entire function early
+
+            color_for_plot = None
+            if len(behaviors) > 1:
+                try:
+                    behavior_index = all_model_behaviors.index(behavior_name)
+                    color_for_plot = color_map[behavior_index % len(color_map)]
+                except (ValueError, IndexError):
+                    color_for_plot = '#FFFFFF'
+
+            actogram = cbas.Actogram(
+                directory=recording.path, model=model, behavior=behavior_name,
+                framerate=framerate_val, start=start_val, binsize_minutes=binsize_minutes_val,
+                threshold=threshold_val, lightcycle=lightcycle,
+                plot_acrophase=plot_acrophase, base_color=color_for_plot
+            )
+
+            if actogram.blob:
+                results.append({'behavior': behavior_name, 'blob': actogram.blob})
+        
+        # Final check before sending data back to the UI
+        with gui_state.viz_task_lock:
+            is_latest = (task_id == gui_state.latest_viz_task_id)
+
+        if is_latest:
+            print(f"Task {task_id} is the latest. Sending results to UI.")
+            eel.updateActogramDisplay(results, task_id)()
         else:
-            print("Actogram generation failed or produced no image blob.")
-            eel.updateActogramDisplay(None)()
+            print(f"Discarding results for obsolete actogram task {task_id}.")
 
     except Exception as e:
-        print(f"Error in make_actogram: {e}")
-        eel.updateActogramDisplay(None)()
-
-
-@eel.expose
-def adjust_actogram(framerate: str, binsize_from_gui: str, start: str, threshold: str,
-                    lightcycle: str, plot_acrophase: bool):
-    """
-    Adjusts the currently displayed actogram by re-generating it with new parameters.
-    This function reuses the identifiers from the existing actogram object.
-    """
-    actogram = gui_state.cur_actogram
-    if actogram is None:
-        print("No current actogram to adjust.")
-        return
-
-    print("Adjusting current actogram with new parameters...")
-    
-    # To get the root and sub_dir, we parse them from the actogram's directory path.
-    # This assumes a structure like .../project/recordings/DATE/SESSION
-    try:
-        path_parts = os.path.normpath(actogram.directory).split(os.sep)
-        sub_dir = path_parts[-1]
-        root = path_parts[-2]
-    except IndexError:
-        print(f"Error: Could not parse root and sub_dir from path: {actogram.directory}")
-        return
-
-    # Re-call the main creation function with the old identifiers and new parameters.
-    make_actogram(
-        root=root,
-        sub_dir=sub_dir,
-        model=actogram.model,
-        behavior=actogram.behavior,
-        framerate=framerate,
-        binsize_from_gui=binsize_from_gui,
-        start=start,
-        threshold=threshold,
-        lightcycle=lightcycle,
-        plot_acrophase=plot_acrophase
-    )
+        print(f"Error in generate_actograms task {task_id}: {e}")
+        # Only clear the display if this was the latest request that failed
+        with gui_state.viz_task_lock:
+            if task_id == gui_state.latest_viz_task_id:
+                eel.updateActogramDisplay([], task_id)()

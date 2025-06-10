@@ -172,7 +172,7 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
     pd.DataFrame(np.array(padded_predictions), columns=behaviors).to_csv(output_file, index=False)
     return output_file
 
-def _create_matplotlib_actogram(binned_activity, light_cycle_booleans, tau, bin_size_minutes, plot_title, start_hour_offset, plot_acrophase=False):
+def _create_matplotlib_actogram(binned_activity, light_cycle_booleans, tau, bin_size_minutes, plot_title, start_hour_offset, plot_acrophase=False, base_color=None):
     """
     Generates a double-plotted actogram using Matplotlib.
     This function contains all data preparation and plotting logic.
@@ -219,12 +219,21 @@ def _create_matplotlib_actogram(binned_activity, light_cycle_booleans, tau, bin_
 
     double_plotted_light = np.array([np.concatenate([pattern, pattern]) for _ in range(num_days)])
 
-    # Setup activity colormap (viridis with transparency)
-    cmap_viridis = plt.get_cmap('viridis')
-    activity_colors = cmap_viridis(np.arange(cmap_viridis.N))
-    activity_colors[0, 3] = 0
-    transparent_viridis = LinearSegmentedColormap.from_list('transparent_viridis', activity_colors)
-    transparent_viridis.set_bad(color=(0,0,0,0))
+    # Setup activity colormap (monochromatic or viridis)
+    if base_color:
+        # Create a transparent-to-solid colormap from the provided base color
+        activity_cmap = LinearSegmentedColormap.from_list(
+            'monochromatic_cmap', 
+            [(0,0,0,0), base_color] # Goes from transparent to the specified color
+        )
+    else:
+        # Fallback to the original viridis colormap
+        cmap_viridis = plt.get_cmap('viridis')
+        activity_colors = cmap_viridis(np.arange(cmap_viridis.N))
+        activity_colors[0, 3] = 0 # Make the 'zero' value transparent
+        activity_cmap = LinearSegmentedColormap.from_list('transparent_viridis', activity_colors)
+    
+    activity_cmap.set_bad(color=(0,0,0,0))
 
     # Setup Figure
     fig, ax = plt.subplots(figsize=(10, max(4, num_days * 0.4)), dpi=120)
@@ -237,7 +246,7 @@ def _create_matplotlib_actogram(binned_activity, light_cycle_booleans, tau, bin_
     ax.imshow(double_plotted_light, aspect='auto', cmap=cmap, interpolation='none', extent=plot_extent, vmin=0, vmax=1)
     non_zero_activity = [v for v in binned_activity if v > 0]
     vmax = np.percentile(non_zero_activity, 90) + 1e-6 if non_zero_activity else 1
-    cax = ax.imshow(double_plotted_events, aspect='auto', cmap=transparent_viridis, interpolation='none', extent=plot_extent, vmin=0, vmax=vmax)
+    cax = ax.imshow(double_plotted_events, aspect='auto', cmap=activity_cmap, interpolation='none', extent=plot_extent, vmin=0, vmax=vmax)
     
     if acrophase_points:
         for day_idx, hour in acrophase_points:
@@ -448,12 +457,13 @@ class Dataset:
 
 class Actogram:
     """Generates and holds data for an actogram visualization."""
-    def __init__(self, directory: str, model: str, behavior: str, framerate: float, start: float, binsize_minutes: int, threshold: float, lightcycle: str, plot_acrophase: bool = False):
+    def __init__(self, directory: str, model: str, behavior: str, framerate: float, start: float, binsize_minutes: int, threshold: float, lightcycle: str, plot_acrophase: bool = False, base_color: str = None):
         self.directory, self.model, self.behavior = directory, model, behavior
         self.framerate, self.start_hour_on_plot = float(framerate), float(start)
         self.threshold, self.bin_size_minutes = float(threshold), int(binsize_minutes)
         self.plot_acrophase = plot_acrophase
         self.lightcycle_str = {"LL": "1"*24, "DD": "0"*24}.get(lightcycle, "1"*12 + "0"*12)
+        self.blob = None # Initialize blob as None
 
         if self.framerate <= 0 or self.bin_size_minutes <= 0: return
         self.binsize_frames = int(self.bin_size_minutes * self.framerate * 60)
@@ -480,7 +490,7 @@ class Actogram:
         if not binned_activity: return
 
         # Plot and encode
-        fig = _create_matplotlib_actogram(binned_activity, [c=="1" for c in self.lightcycle_str], 24.0, self.bin_size_minutes, f"{model} - {behavior}", self.start_hour_on_plot, self.plot_acrophase)
+        fig = _create_matplotlib_actogram(binned_activity, [c=="1" for c in self.lightcycle_str], 24.0, self.bin_size_minutes, f"{model} - {behavior}", self.start_hour_on_plot, self.plot_acrophase, base_color)
         if fig:
             buf = io.BytesIO()
             fig.savefig(buf, format='png', bbox_inches='tight', facecolor='#343a40')
