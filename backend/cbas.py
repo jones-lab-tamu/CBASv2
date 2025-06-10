@@ -118,13 +118,16 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
         with h5py.File(file_path, "r") as f:
             cls_np = np.array(f["cls"][:])
     except Exception as e:
-        print(f"Error reading HDF5 file {file_path}: {e}"); return None
+        print(f"Error reading HDF5 file {file_path}: {e}")
+        return None
     
     if cls_np.ndim < 2 or cls_np.shape[0] < seq_len:
-        print(f"Warning: HDF5 file {file_path} is too short for inference. Skipping."); return None
+        print(f"Warning: HDF5 file {file_path} is too short for inference. Skipping.")
+        return None
 
-    # Center embeddings by subtracting the mean over the time axis
-    cls = torch.from_numpy(cls_np - np.mean(cls_np, axis=0)).half()
+    # This handles the data loading robustly.
+    cls_np_f32 = cls_np.astype(np.float32)
+    cls = torch.from_numpy(cls_np_f32 - np.mean(cls_np_f32, axis=0))
     
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -141,10 +144,17 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
 
         if len(batch_windows) >= 4096 or i == len(cls) - half_seqlen - 1:
             if not batch_windows: continue
+            
             batch_tensor = torch.stack(batch_windows)
-            with torch.no_grad(), torch.amp.autocast(device_type=device.type if device.type != 'mps' else 'cpu'):
+            
+            # Remove the `torch.amp.autocast` context manager.
+            # We only need `torch.no_grad()` for inference. This forces all
+            # operations to use the model's native float32 precision,
+            # preventing the BFloat16 type error.
+            with torch.no_grad():
                 logits = model.forward_nodrop(batch_tensor.to(device))
-                predictions.extend(torch.softmax(logits, dim=1).cpu().numpy())
+                
+            predictions.extend(torch.softmax(logits, dim=1).cpu().numpy())
             batch_windows = []
 
     if not predictions: return None
@@ -161,7 +171,6 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
 
     pd.DataFrame(np.array(padded_predictions), columns=behaviors).to_csv(output_file, index=False)
     return output_file
-
 
 def _create_matplotlib_actogram(binned_activity, light_cycle_booleans, tau, bin_size_minutes, plot_title, start_hour_offset, plot_acrophase=False):
     """
@@ -694,7 +703,7 @@ class Project:
                 window = cls_centered[window_start:window_end]
                 if window.shape[0] != seq_len: continue
                 
-                seqs.append(torch.from_numpy(window).half())
+                seqs.append(torch.from_numpy(window).float())
                 try:
                     labels.append(torch.tensor(behaviors.index(inst["label"])).long())
                 except ValueError:
