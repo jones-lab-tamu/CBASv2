@@ -1,60 +1,113 @@
-import threading 
-from typing import TYPE_CHECKING, Any, List, Dict, Union # Use List and Dict for more specific collection types
+"""
+Defines the global state for the CBAS application.
 
-# Import project base classes directly for type hinting if they don't cause circular issues at runtime
-# For modules like cbas, it's usually fine as gui_state doesn't import cbas classes that import gui_state.
-import cbas 
+This module serves as a centralized, shared memory space for all other backend
+modules. It holds references to the current project, labeling session details,
+background thread handles, and other application-wide variables. This avoids
+the need for scattered global variables and makes state management more predictable.
+"""
 
-# For cv2, if it's a core dependency, direct import is okay.
-import cv2 # For cv2.VideoCapture type hint
+import threading
+from typing import TYPE_CHECKING, Any, List, Dict, Union
 
+# Import project base classes for type hinting. This is safe as long as these
+# modules do not import gui_state at the top level, avoiding circular dependencies.
+import cbas
+import cv2
+
+# Use TYPE_CHECKING block to import types only for static analysis (e.g., by linters
+# or IDEs), preventing runtime circular import errors with the workthreads module.
 if TYPE_CHECKING:
-    # These are for type checking phase only to avoid runtime circular imports
-    # if workthreads.py were to import gui_state at the top level.
-    # String literals for forward references can also be used directly on attributes.
     from workthreads import TrainingThread, EncodeThread, ClassificationThread
-    from watchdog.observers import Observer # Assuming watchdog is type-hint friendly
-    from cmap import Colormap # If cmap.Colormap is the actual type
+    from watchdog.observers import Observer
+    from cmap import Colormap
 
-# --- Project State ---
-proj: cbas.Project | None = None # Holds the currently loaded cbas.Project instance
 
-# --- Labeling Page State ---
-label_capture: cv2.VideoCapture | None = None # OpenCV video capture object for the current labeling video
-label_dataset: cbas.Dataset | None = None     # The cbas.Dataset object being labeled
-label_videos: List[str] = []                 # List of video file paths for the current labeling dataset
-label_vid_index: int = -1                    # Index of the current video in label_videos
-label_index: int = -1                        # Current frame index in the label_capture
+# =================================================================
+# GLOBAL PROJECT STATE
+# =================================================================
 
-label_start: int = -1                        # Start frame of a new label being defined
-label_type: int = -1                         # Index of the behavior type for a new label being defined
+proj: Union[cbas.Project, None] = None
+"""The currently loaded cbas.Project instance. None if no project is open."""
+
+
+# =================================================================
+# LABELING INTERFACE STATE
+# =================================================================
+
+label_capture: Union[cv2.VideoCapture, None] = None
+"""OpenCV video capture object for the video currently being labeled."""
+
+label_dataset: Union[cbas.Dataset, None] = None
+"""The cbas.Dataset object that is the target of the current labeling session."""
+
+label_videos: List[str] = []
+"""A list of video file paths for the current labeling session. Often just one video."""
+
+label_vid_index: int = -1
+"""The index of the current video being shown from the `label_videos` list."""
+
+label_index: int = -1
+"""The current frame number (playhead position) in the `label_capture`."""
+
+label_start: int = -1
+"""The start frame of a new label instance being defined by the user."""
+
+label_type: int = -1
+"""The behavior index of a new label instance being defined by the user."""
+
+label_session_buffer: List[Dict[str, Any]] = []
+"""In-memory buffer holding all labels (both pre-loaded and user-created) for the current video session."""
+
+label_history: List[Dict[str, Any]] = []
+"""A stack of newly created instances, used for the 'Undo' (pop) functionality."""
+
+selected_instance_index: int = -1
+"""The index within the `label_session_buffer` of the currently highlighted instance. -1 means none."""
+
+label_behavior_colors: List[str] = []
+"""The pre-vetted, high-contrast list of hex color strings for the current set of behaviors."""
+
+# Use a type hint for the colormap object if possible, otherwise fallback to Any.
 if TYPE_CHECKING:
-    label_col_map: Colormap | None = None    # Colormap object (from cmap library)
+    label_col_map: Union[Colormap, None] = None
 else:
-    label_col_map: Any | None = None         # Fallback to Any at runtime if Colormap isn't imported
-label_history: List[Dict[str, Any]] = []     # History of added instances (list of dictionaries)
+    label_col_map: Any = None
 
-# --- Background Thread Handles & State ---
-# These should be initialized by workthreads.start_threads() called from app.py
 
-# Training Thread
-training_thread: 'TrainingThread | None' = None # String literal for forward reference
+# =================================================================
+# BACKGROUND THREADS & TASK QUEUES
+# =================================================================
 
-# Encoding Thread
-encode_thread: 'EncodeThread | None' = None 
-encode_lock: Union[threading.Lock, None] = None  # <<< CHANGED
-encode_tasks: List[str] = []                   
+# --- Encoding Thread ---
+encode_thread: Union['EncodeThread', None] = None
+"""Handle to the background thread responsible for video encoding."""
+encode_lock: Union[threading.Lock, None] = None
+"""A lock to ensure thread-safe access to the `encode_tasks` list."""
+encode_tasks: List[str] = []
+"""A queue of video file paths waiting to be encoded into HDF5 embeddings."""
 
-# Classification Thread
-classify_thread: 'ClassificationThread | None' = None 
-classify_lock: Union[threading.Lock, None] = None # <<< CHANGED
-classify_tasks: List[str] = []                      
+# --- Classification (Inference) Thread ---
+classify_thread: Union['ClassificationThread', None] = None
+"""Handle to the background thread responsible for running model inference."""
+classify_lock: Union[threading.Lock, None] = None
+"""A lock to ensure thread-safe access to the `classify_tasks` list."""
+classify_tasks: List[str] = []
+"""A queue of HDF5 file paths waiting for classification."""
 
-# File System Watcher for Recordings
-recording_observer: 'Observer | None' = None 
+# --- Training Thread ---
+training_thread: Union['TrainingThread', None] = None
+"""Handle to the background thread responsible for training models."""
+# Note: The training thread manages its own internal queue.
 
-# --- Visualization Page State ---
-cur_actogram: cbas.Actogram | None = None # Holds the currently generated cbas.Actogram object
+# --- File System Watcher ---
+recording_observer: Union['Observer', None] = None
+"""Handle to the watchdog observer that monitors the recordings directory for new files."""
 
-# --- UI Feedback / Status ---
-# No specific state variables here currently; UI updates are via direct eel calls.
+
+# =================================================================
+# VISUALIZATION PAGE STATE
+# =================================================================
+
+cur_actogram: Union[cbas.Actogram, None] = None
+"""The currently generated cbas.Actogram object being displayed on the Visualize page."""

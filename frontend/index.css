@@ -1,341 +1,195 @@
-.fab-container {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  user-select: none;
-  position: fixed;
-  bottom: 30px;
-  right: 30px;
-}
-.fab-container:hover {
-  height: 100%;
-  cursor: pointer;
-}
-.fab-container:hover .sub-button1:nth-child(2) {
-  transform: translateY(-80px);
-}
-.fab-container:hover .sub-button1:nth-child(3) {
-  transform: translateY(-140px);
-}
-.fab-container .fab {
-  position: absolute;
-  bottom: 0px;
-  right: 15px;
-  height: 70px;
-  width: 70px;
-  background-color: rgb(75, 162, 255);
-  border-radius: 50%;
-  z-index: 2;
-}
-.fab-container .fab::before {
-  content: " ";
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  height: 35px;
-  width: 35px;
-  background-color: inherit;
-  border-radius: 0 0 10px 0;
-  z-index: -1;
-}
-.fab-container .fab .fab-content {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  width: 100%;
-  border-radius: 50%;
-}
-.fab-container .fab .fab-content .material-icons {
-  color: white;
-  font-size: 48px;
-}
-.fab-container .sub-button {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  bottom: 10px;
-  right: 25px;
-  height: 50px;
-  width: 50px;
-  background-color: rgb(75, 162, 255);
-  border-radius: 50%;
-  transition: all 0.3s ease;
-}
-.fab-container .sub-button:hover {
-  cursor: pointer;
-}
-.fab-container .sub-button .i {
-  color: white;
-}
-.fab-container .sub-button1 {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  bottom: 10px;
-  right: 25px;
-  height: 50px;
-  width: 50px;
-  background-color: rgb(75, 162, 255);
-  border-radius: 50%;
-  transition: all 0.3s ease;
-}
-.fab-container .sub-button1:hover {
-  cursor: pointer;
-}
-.fab-container .sub-button1 .i {
-  color: white;
+/* =================================================================
+   FLOATING ACTION BUTTON (FAB) STYLES
+   ================================================================= */
+
+/* --- Generic FAB Container & Button Styles --- */
+/* This defines the base style for all FABs, regardless of position */
+.fab {
+    position: relative;
+    height: 70px;
+    width: 70px;
+    background-color: rgb(75, 162, 255); /* Bootstrap-like primary blue */
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.3s ease;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
-@keyframes fadeInOut {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-  100% {
-    opacity: 1;
-  }
+.fab:hover {
+    background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
 }
-.blinking {
-  animation: fadeInOut 3s infinite;
+
+.fab i {
+    /* Styles for Bootstrap Icons inside the FAB */
+    font-size: 28px;
+    color: white;
 }
+
+/* --- FAB Positioning Containers --- */
+/* Use these containers to place groups of FABs on the screen */
 
 .fab-container-left {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  user-select: none;
-  position: fixed;
-  bottom: 30px;
-  left: 30px;
-}
-
-.fab-container-left .fab {
-  position: relative;
-  margin-bottom: 10px; /* Adds spacing between buttons */
-  height: 70px;
-  width: 70px;
-  background-color: rgb(75, 162, 255); /* Use $primary if using SCSS */
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.fab-container-left .fab:hover {
-  background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
-}
-
-.fab-container-left .fab i {
-  color: white;
-  font-size: 28px;
+    position: fixed;
+    bottom: 30px;
+    left: 30px;
+    display: flex;
+    flex-direction: column-reverse; /* Stack new buttons on top */
+    align-items: center;
+    gap: 15px; /* Adds space between buttons in the container */
 }
 
 .fab-container-right {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  user-select: none;
-  position: fixed;
-  bottom: 30px;
-  right: 30px;
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    flex-direction: column-reverse; /* Stack new buttons on top */
+    align-items: center;
+    gap: 15px; /* Adds space between buttons in the container */
 }
 
-.fab-container-right .fab {
-  position: relative;
-  margin-bottom: 10px; /* Adds spacing between buttons */
-  height: 70px;
-  width: 70px;
-  background-color: rgb(75, 162, 255); /* Use $primary if using SCSS */
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
+/* --- Legacy/Unused FAB Styles --- */
 
-.fab-container-right .fab:hover {
-  background-color: rgb(55, 142, 235); /* Slightly darker shade on hover */
+.fab-container {
+    position: fixed; bottom: 30px; right: 30px;
 }
-
-.fab-container-right .fab i {
-  color: white;
-  font-size: 28px;
-}
-
 .fab-container-refresh {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  user-select: none;
-  position: fixed;
-  bottom: 30px;
-  left: 30px;
+    position: fixed; bottom: 30px; left: 30px;
 }
-.fab-container-refresh:hover {
-  height: 100%;
-  cursor: pointer;
-}
-.fab-container-refresh .fab {
-  position: absolute;
-  height: 70px;
-  width: 70px;
-  bottom: 0px;
-  left: 15px;
-  background-color: rgb(75, 162, 255);
-  border-radius: 50%;
-  z-index: 2;
-}
-.fab-container-refresh .fab .fab-content {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  width: 100%;
-  border-radius: 50%;
-}
-
 .fab-container-inference {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  user-select: none;
-  position: fixed;
-  top: 70px;
-  right: 15px;
-}
-.fab-container-inference:hover {
-  height: 100%;
-  cursor: pointer;
-}
-.fab-container-inference .fab {
-  position: absolute;
-  height: 50px;
-  width: 50px;
-  top: 0px;
-  right: 15px;
-  background-color: rgb(75, 162, 255);
-  border-radius: 50%;
-  z-index: 2;
-}
-.fab-container-inference .fab .fab-content {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  width: 100%;
-  border-radius: 50%;
+    position: fixed; top: 70px; right: 15px;
 }
 
-#cover-spin {
-  position: fixed;
-  width: 100%;
-  height: 100%;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.3);
-  z-index: 9999;
-  visibility: hidden;
-}
 
-@-webkit-keyframes spin {
-  from {
-    -webkit-transform: rotate(0deg);
-  }
-  to {
-    -webkit-transform: rotate(360deg);
-  }
-}
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-#cover-spin::after {
-  content: "";
-  display: block;
-  position: sticky;
-  left: 44vw;
-  top: 45%;
-  width: 12vw;
-  height: 12vw;
-  border-style: solid;
-  border-color: white;
-  border-top-color: transparent;
-  border-width: 4px;
-  border-radius: 50%;
-  -webkit-animation: spin 0.8s linear infinite;
-  animation: spin 0.8s linear infinite;
-}
+/* =================================================================
+   ANIMATIONS
+   ================================================================= */
 
-#inference-bar {
-  position: fixed;
-  width: 40vw;
-  height: 20px;
-  left: 30vw;
-  right: 30vw;
-  bottom: 45px;
-  visibility: hidden;
+@keyframes fadeInOut {
+    0% { opacity: 1; }
+    50% { opacity: 0.4; }
+    100% { opacity: 1; }
 }
-
-#fun-blurb {
-  position: absolute;
-  top: 80%;
-  right: 0%;
-  width: 300px;
-  color: purple;
-  text-align: center;
-  font-size: 25px;
-  font-family: "Courier New", monospace;
-  font-weight: bolder;
-  transform: rotate(-15deg);
-  animation: anisize 1s infinite;
+.blinking {
+    animation: fadeInOut 3s infinite;
 }
 
 @keyframes anisize {
-  50% {
-    font-size: 28px;
-  }
+    50% { font-size: 28px; }
 }
 
+
+/* =================================================================
+   FULL-SCREEN OVERLAYS & SPINNERS
+   ================================================================= */
+
+#cover-spin {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    left: 0; top: 0;
+    background-color: rgba(0, 0, 0, 0.3);
+    z-index: 9999;
+    visibility: hidden; /* Controlled by JS */
+}
+
+#cover-spin::after {
+    content: "";
+    display: block;
+    position: absolute; /* Changed from sticky */
+    left: 50%;
+    top: 50%;
+    width: 80px;  /* Fixed size is more reliable than vw */
+    height: 80px;
+    margin-left: -40px; /* Center the spinner */
+    margin-top: -40px;
+    border: 4px solid white;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+#inference-bar {
+    position: fixed;
+    width: 40vw;
+    height: 20px;
+    left: 30vw;
+    bottom: 45px;
+    visibility: hidden; /* Controlled by JS */
+}
+
+
+/* =================================================================
+   UI COMPONENTS
+   ================================================================= */
+
+/* Fun blurb on the startup page */
+#fun-blurb {
+    position: absolute;
+    top: 80%;
+    right: 0%;
+    width: 300px;
+    color: purple;
+    text-align: center;
+    font-size: 25px;
+    font-family: "Courier New", monospace;
+    font-weight: bolder;
+    transform: rotate(-15deg);
+    animation: anisize 1s infinite;
+}
+
+/* Style for keyboard key display (e.g., <kbd>Ctrl</kbd>) */
 kbd {
-  background-color: #eee;
-  border-radius: 3px;
-  border: 1px solid #b4b4b4;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, .2), 0 2px 0 0 rgba(255, 255, 255, .7) inset;
-  color: #333;
-  display: inline-block;
-  font-family: monospace;
-  font-size: .85em;
-  font-weight: 700;
-  line-height: 1;
-  padding: 2px 4px;
-  white-space: nowrap;
+    background-color: #eee;
+    border-radius: 3px;
+    border: 1px solid #b4b4b4;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, .2), 0 2px 0 0 rgba(255, 255, 255, .7) inset;
+    color: #333;
+    display: inline-block;
+    font-family: monospace;
+    font-size: .85em;
+    font-weight: 700;
+    line-height: 1;
+    padding: 2px 4px;
+    white-space: nowrap;
 }
 
+
+/* =================================================================
+   PAGE-SPECIFIC STYLES
+   ================================================================= */
+
+/* --- Label/Train Page --- */
+
+/* Text color for the "Labeling Controls" cheat sheet */
 #labeling-cheat-sheet .card-body ul li {
-  color: #f8f9fa; /* A standard light/white color from Bootstrap */
+    color: #f8f9fa;
 }
-
 #labeling-cheat-sheet .card-header h5 {
-  color: #f8f9fa; /* A standard light/white color */
+    color: #f8f9fa;
 }
 
+/* Custom style for highlighting the selected behavior row */
+#controls .list-group-item.highlight-selected {
+    background-color: #0d6efd !important; /* A bright, primary Bootstrap blue */
+    color: white !important; /* Ensure text is white for contrast */
+    border-color: #0a58ca !important; /* A slightly darker border */
+}
+
+/* Make the highlight transition smoother */
+#controls .list-group-item {
+    transition: background-color 0.2s ease-in-out;
+}
+
+/* NOTE: SourceMappingURL is a developer tool feature. */
 /*# sourceMappingURL=index.css.map */

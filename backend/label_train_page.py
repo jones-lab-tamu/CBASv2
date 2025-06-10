@@ -1,734 +1,645 @@
-import cbas
-import gui_state
+"""
+Manages all backend logic for the 'Label/Train' page of the CBAS application.
 
-# import threading # Not directly used here, tasks are offloaded to workthreads
-# import ctypes   # Not directly used here
+This includes:
+- Handling the labeling interface state (loading videos, drawing frames).
+- Managing the session buffer for in-memory label editing.
+- Saving corrected labels back to file.
+- Providing data for the UI (dataset configs, video lists, etc.).
+- Launching and managing training and inference tasks via the workthreads module.
+"""
+
+import os
+import base64
+import traceback
+import yaml
+import cv2
+import numpy as np
+import torch
+
+# Project-specific imports
+import cbas
+import classifier_head
+import gui_state
+import workthreads
+from cmap import Colormap
 
 import eel
 
-from cmap import Colormap # For coloring labels
 
-import yaml
-import base64
-import os
-import cv2
-import numpy as np
+# =================================================================
+# HELPER FUNCTIONS
+# =================================================================
 
-import workthreads # For queuing TrainingTask
+def color_distance(rgb1, rgb2):
+    """Calculates the perceived distance between two RGB colors for contrast checking."""
+    rmean = (rgb1[0] + rgb2[0]) // 2
+    r = rgb1[0] - rgb2[0]
+    g = rgb1[1] - rgb2[1]
+    b = rgb1[2] - rgb2[2]
+    return (((512 + rmean) * r * r) >> 8) + (4 * g * g) + (((767 - rmean) * b * b) >> 8)
 
-@eel.expose
-def model_exists(model_name: str) -> bool:
-    """
-    Checks if a model with the given name exists in the current project.
-    """
-    if gui_state.proj is None:
-        return False
-    return model_name in gui_state.proj.models
 
-@eel.expose
-def load_dataset_configs() -> dict:
-    """
-    Loads configurations for all available datasets.
-    Returns a dictionary mapping dataset names to their config dicts.
-    """
-    if gui_state.proj is None or not gui_state.proj.datasets:
-        return {}
-    return {name: dataset.config for name, dataset in gui_state.proj.datasets.items()}
-
-@eel.expose
-def handle_click_on_label_image(x: int, y: int):
-    """
-    Handles a click on the labeling image to set the current frame index.
-    x: x-coordinate of the click (0-500 range from JS).
-    y: y-coordinate (not used for frame seeking, but passed by JS).
-    """
-    if gui_state.label_capture is None or not gui_state.label_capture.isOpened():
-        print("Label capture not ready for click handling.")
-        return
-
-    amount_of_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-    if amount_of_frames > 0:
-        # Assuming image width in JS is 500px
-        gui_state.label_index = int(x * amount_of_frames / 500)
-        gui_state.label_index = max(0, min(gui_state.label_index, int(amount_of_frames) - 1)) # Clamp index
-        render_image()
-    else:
-        print("Video has no frames to seek to.")
+def hex_to_rgb(hex_color):
+    """Converts a hex color string (e.g., '#RRGGBB') to an (R, G, B) tuple."""
+    h = hex_color.lstrip('#')
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
 def tab20_map(val: int) -> int:
-    """Maps an integer to an index for the tab20 colormap for distinct colors."""
-    if val < 10:
-        return val * 2
-    else:
-        return (val - 10) * 2 + 1
+    """
+    Maps an integer to an index for the 'seaborn:tab20' colormap.
+    This version includes manual overrides for known problematic (grey/brown) colors
+    to ensure good UI contrast against the timeline background.
+    """
+    remap = {7: 6, 14: 2, 15: 4}  # Remap grey/brown colors to vibrant ones
+    if val in remap:
+        return remap[val]
+    # Default distinct color mapping logic
+    return (val * 2) if val < 10 else ((val - 10) * 2 + 1)
+
+
+# =================================================================
+# EEL-EXPOSED FUNCTIONS: DATA & CONFIGURATION
+# =================================================================
+
+@eel.expose
+def model_exists(model_name: str) -> bool:
+    """Checks if a model with the given name exists in the current project."""
+    return gui_state.proj and model_name in gui_state.proj.models
+
+
+@eel.expose
+def load_dataset_configs() -> dict:
+    """Loads configurations for all available datasets."""
+    if not gui_state.proj: return {}
+    return {name: dataset.config for name, dataset in gui_state.proj.datasets.items()}
+
+
+@eel.expose
+def get_available_models() -> list[str]:
+    """Returns a sorted list of all model names available in the project."""
+    if not gui_state.proj: return []
+    return sorted(list(gui_state.proj.models.keys()))
+
+
+@eel.expose
+def get_record_tree() -> dict:
+    """Fetches the recording directory tree structure for modal dialogs."""
+    if not gui_state.proj or not os.path.exists(gui_state.proj.recordings_dir):
+        return {}
+    tree = {}
+    for date_dir in os.scandir(gui_state.proj.recordings_dir):
+        if date_dir.is_dir():
+            tree[date_dir.name] = [
+                session.name for session in os.scandir(date_dir.path) if session.is_dir()
+            ]
+    return tree
+
+
+@eel.expose
+def get_videos_for_dataset(dataset_name: str) -> list[tuple[str, str]]:
+    """Finds all .mp4 files within a dataset's whitelist for 'Label from Scratch' mode."""
+    if not gui_state.proj: return []
+    dataset = gui_state.proj.datasets.get(dataset_name)
+    if not dataset: return []
+    
+    whitelist = dataset.config.get("whitelist", [])
+    if not whitelist: return []
+
+    video_list = []
+    # This logic can be simplified in the future, but works for now.
+    if gui_state.proj.recordings_dir and os.path.exists(gui_state.proj.recordings_dir):
+        for root, _, files in os.walk(gui_state.proj.recordings_dir):
+            for file in files:
+                if file.endswith(".mp4"):
+                    video_path = os.path.join(root, file)
+                    normalized_path = os.path.normpath(video_path)
+                    if any(os.path.normpath(p) in normalized_path for p in whitelist):
+                        display_name = os.path.relpath(video_path, gui_state.proj.recordings_dir)
+                        video_list.append((video_path, display_name))
+    
+    return sorted(video_list, key=lambda x: x[1])
+
+
+@eel.expose
+def get_inferred_session_dirs(dataset_name: str, model_name: str) -> list[str]:
+    """Finds unique sub-directories that contain videos inferred by a specific model."""
+    if not gui_state.proj: return []
+    dataset = gui_state.proj.datasets.get(dataset_name)
+    if not dataset: return []
+    
+    whitelist_paths = [os.path.abspath(os.path.join(gui_state.proj.recordings_dir, p)) for p in dataset.config.get("whitelist", [])]
+    if not whitelist_paths: return []
+
+    inferred_dirs = set()
+    for root, _, files in os.walk(gui_state.proj.recordings_dir):
+        for file in files:
+            if file.endswith(f"_{model_name}_outputs.csv"):
+                csv_abs_path = os.path.abspath(os.path.join(root, file))
+                if any(csv_abs_path.startswith(wl_path) for wl_path in whitelist_paths):
+                    inferred_dirs.add(os.path.relpath(root, gui_state.proj.recordings_dir))
+    
+    return sorted(list(inferred_dirs))
+
+
+@eel.expose
+def get_inferred_videos_for_session(session_dir_rel: str, model_name: str) -> list[tuple[str, str]]:
+    """Gets a list of inferred videos from a single specified session directory."""
+    if not gui_state.proj: return []
+    session_abs_path = os.path.join(gui_state.proj.recordings_dir, session_dir_rel)
+    if not os.path.isdir(session_abs_path): return []
+    
+    ready_videos = []
+    for file in os.listdir(session_abs_path):
+        if file.endswith(f"_{model_name}_outputs.csv"):
+            csv_path = os.path.join(session_abs_path, file)
+            mp4_path = csv_path.replace(f"_{model_name}_outputs.csv", ".mp4")
+            if os.path.exists(mp4_path):
+                ready_videos.append((mp4_path, os.path.basename(mp4_path)))
+                
+    return sorted(ready_videos, key=lambda x: x[1])
+
+
+# =================================================================
+# EEL-EXPOSED FUNCTIONS: LABELING WORKFLOW & ACTIONS
+# =================================================================
+
+def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_instances: list = None):
+    """
+    (WORKER) This is the background task that prepares the labeling session. It handles
+    all state setup and then calls back to the JavaScript UI when ready.
+    """
+    try:
+        # 1. Validate State and Arguments
+        print("Labeling worker started.")
+        if gui_state.proj is None: raise ValueError("Project is not loaded.")
+        if name not in gui_state.proj.datasets: raise ValueError(f"Dataset '{name}' not found.")
+        if not video_to_open or not os.path.exists(video_to_open):
+            raise FileNotFoundError(f"Video to label does not exist: {video_to_open}")
+
+        # 2. Reset Global Labeling State
+        print("Resetting labeling state for new session.")
+        if gui_state.label_capture and gui_state.label_capture.isOpened():
+            gui_state.label_capture.release()
+        
+        gui_state.label_capture, gui_state.label_index = None, -1
+        gui_state.label_videos, gui_state.label_vid_index = [], -1
+        gui_state.label_type, gui_state.label_start = -1, -1
+        gui_state.label_history, gui_state.label_behavior_colors = [], []
+        gui_state.label_session_buffer, gui_state.selected_instance_index = [], -1
+        
+        # 3. Set Up Dataset and Colormap
+        dataset: cbas.Dataset = gui_state.proj.datasets[name]
+        gui_state.label_dataset = dataset
+        gui_state.label_col_map = Colormap("seaborn:tab20")
+
+        # 4. Prepare the In-Memory Session Buffer
+        print("Loading session buffer...")
+        gui_state.label_videos = [video_to_open]
+        current_video_path = gui_state.label_videos[0]
+
+        for b_name, b_insts in gui_state.label_dataset.labels["labels"].items():
+            for inst in b_insts:
+                if inst.get("video") == current_video_path:
+                    gui_state.label_session_buffer.append(inst)
+        print(f"Loaded {len(gui_state.label_session_buffer)} existing human labels into buffer.")
+
+        labeling_mode = 'scratch'
+        model_name_for_ui = ''
+        if preloaded_instances:
+            labeling_mode = 'review'
+            model_name_for_ui = name
+            print(f"Applying {len(preloaded_instances)} pre-loaded instances.")
+            for pred_inst in preloaded_instances:
+                is_overlapping = any(max(pred_inst['start'], h['start']) <= min(pred_inst['end'], h['end']) for h in gui_state.label_session_buffer)
+                if not is_overlapping:
+                    gui_state.label_session_buffer.append(pred_inst)
+        
+        # 5. Generate and Store Corrected Colors
+        dataset_behaviors = gui_state.label_dataset.labels.get("behaviors", [])
+        behavior_colors = [str(gui_state.label_col_map(tab20_map(i))) for i in range(len(dataset_behaviors))]
+        gui_state.label_behavior_colors = behavior_colors
+
+        # 6. Call Frontend to Build the UI
+        print("Setup complete. Calling frontend to build UI.")
+        eel.buildLabelingUI(dataset_behaviors, behavior_colors)()
+        eel.setLabelingModeUI(labeling_mode, model_name_for_ui)()
+
+        # 7. Load Video and Push Initial Frame
+        if not gui_state.label_videos: raise ValueError("Video list is empty after setup.")
+        print("Loading video and pushing initial frame...")
+        next_video(0)
+
+    except Exception as e:
+        print(f"FATAL ERROR in labeling worker: {e}")
+        traceback.print_exc()
+        eel.showErrorOnLabelTrainPage(f"Failed to start labeling session: {e}")()
+
+
+@eel.expose
+def start_labeling(name: str, video_to_open: str = None, preloaded_instances: list = None) -> bool:
+    """
+    (LAUNCHER) Lightweight function to spawn the labeling worker in the background.
+    Returns True immediately to unblock the JavaScript UI.
+    """
+    try:
+        eel.spawn(_start_labeling_worker, name, video_to_open, preloaded_instances)
+        print(f"Spawned labeling worker for dataset '{name}'.")
+        return True
+    except Exception as e:
+        print(f"Failed to spawn labeling worker: {e}")
+        return False
+
+
+@eel.expose
+def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_to_label: str) -> bool:
+    """
+    (LAUNCHER) Runs a quick inference step and then spawns the labeling worker.
+    """
+    try:
+        print(f"Request to pre-label '{os.path.basename(video_path_to_label)}' with model '{model_name}'...")
+        if gui_state.proj is None: raise ValueError("Project not loaded")
+        dataset = gui_state.proj.datasets.get(dataset_name)
+        model_obj = gui_state.proj.models.get(model_name)
+        if not dataset or not model_obj: raise ValueError("Dataset or Model not found.")
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        torch_model = classifier_head.classifier(
+            in_features=768,
+            out_features=len(model_obj.config["behaviors"]),
+            seq_len=model_obj.config["seq_len"],
+        ).to(device)
+        torch_model.load_state_dict(torch.load(model_obj.weights_path, map_location=device))
+        torch_model.eval()
+
+        h5_path = video_path_to_label.replace(".mp4", "_cls.h5")
+        if not os.path.exists(h5_path): raise FileNotFoundError(f"HDF5 file not found: {h5_path}")
+        
+        csv_path = cbas.infer_file(
+            file_path=h5_path, model=torch_model, dataset_name=model_obj.name,
+            behaviors=model_obj.config["behaviors"], seq_len=model_obj.config["seq_len"], device=device
+        )
+        if not csv_path or not os.path.exists(csv_path):
+            raise RuntimeError("Inference failed to produce a CSV output file.")
+
+        preloaded_instances = dataset.predictions_to_instances(csv_path, model_obj.name)
+        
+        eel.spawn(_start_labeling_worker, dataset_name, video_path_to_label, preloaded_instances)
+        
+        print(f"Spawned pre-labeling worker for video '{os.path.basename(video_path_to_label)}'.")
+        return True
+
+    except Exception as e:
+        print(f"ERROR in start_labeling_with_preload: {e}")
+        eel.showErrorOnLabelTrainPage(f"Failed to start pre-labeling: {e}")()
+        return False
+
+
+@eel.expose
+def save_session_labels():
+    """Overwrites the labels for the current video in labels.yaml with the session buffer."""
+    if not gui_state.label_dataset or not gui_state.label_videos: return
+
+    current_video_path = gui_state.label_videos[0]
+    all_labels = gui_state.label_dataset.labels["labels"]
+
+    for behavior_name in all_labels:
+        all_labels[behavior_name][:] = [
+            inst for inst in all_labels[behavior_name] if inst.get("video") != current_video_path
+        ]
+    
+    for corrected_inst in gui_state.label_session_buffer:
+        all_labels.setdefault(corrected_inst['label'], []).append(corrected_inst)
+    
+    with open(gui_state.label_dataset.labels_path, "w") as file:
+        yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
+    
+    print(f"Saved {len(gui_state.label_session_buffer)} labels for video {os.path.basename(current_video_path)}.")
+
+
+# =================================================================
+# EEL-EXPOSED FUNCTIONS: IN-SESSION LABELING ACTIONS
+# =================================================================
+
+@eel.expose
+def handle_click_on_label_image(x: int, y: int):
+    """Handles a click on the timeline to scrub to a specific frame."""
+    if gui_state.label_capture and gui_state.label_capture.isOpened():
+        total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        if total_frames > 0:
+            gui_state.label_index = int(x * total_frames / 500)
+            render_image()
+
 
 @eel.expose
 def next_video(shift: int):
-    """
-    Moves to the next or previous video in the labeling queue.
-    shift: 1 for next, -1 for previous.
-    """
+    """Loads the next or previous video in the labeling session's video list."""
     if not gui_state.label_videos:
-        print("No videos available for labeling.")
-        eel.updateLabelImageSrc(None) # Clear image
-        eel.updateFileInfo("No video loaded.")
-        return
+        eel.updateLabelImageSrc(None); eel.updateFileInfo("No videos available."); return
 
-    gui_state.label_start = -1 # Reset current label start
+    gui_state.label_start, gui_state.label_type = -1, -1
     gui_state.label_vid_index = (gui_state.label_vid_index + shift) % len(gui_state.label_videos)
-    gui_state.label_type = -1    # Reset current label type
-    gui_state.label_index = 0    # Start at the beginning of the new video
-
     current_video_path = gui_state.label_videos[gui_state.label_vid_index]
-    
-    if gui_state.label_capture is not None and gui_state.label_capture.isOpened():
-        gui_state.label_capture.release() # Release previous capture
 
+    if gui_state.label_capture and gui_state.label_capture.isOpened():
+        gui_state.label_capture.release()
+    
     print(f"Loading video for labeling: {current_video_path}")
     capture = cv2.VideoCapture(current_video_path)
 
     if not capture.isOpened():
-        print(f"Error: Could not open video {current_video_path}. Attempting to find another valid video.")
-        # Attempt to recover by finding the next valid video
-        for i in range(len(gui_state.label_videos)):
-            gui_state.label_vid_index = (gui_state.label_vid_index + (1 if shift >=0 else -1)) % len(gui_state.label_videos)
-            current_video_path = gui_state.label_videos[gui_state.label_vid_index]
-            capture = cv2.VideoCapture(current_video_path)
-            if capture.isOpened():
-                print(f"Recovered: Loaded video {current_video_path}")
-                break
-            else:
-                print(f"Skipping invalid video: {current_video_path}")
-        else: # Else for 'for' loop: executed if loop finished without break
-            eel.updateLabelImageSrc(None)
-            eel.updateFileInfo("No valid videos found in dataset.")
-            print("Error: No valid videos found in the dataset after attempting recovery.")
-            gui_state.label_capture = None
-            return
+        eel.updateLabelImageSrc(None); eel.updateFileInfo(f"Error loading video."); gui_state.label_capture = None; return
 
     gui_state.label_capture = capture
-    # Set to first frame and render (next_frame will handle initial render)
-    # gui_state.label_index = 0 # Already set
-    next_frame(0) # Call next_frame with 0 shift to render current frame (next_frame handles shift<=0)
-    update_counts() # Update counts for the new video
+    gui_state.label_index = 0
+    render_image()
+    update_counts()
+
 
 @eel.expose
 def next_frame(shift: int):
-    """
-    Moves to the next/previous frame in the current labeling video.
-    shift: Number of frames to move by. If <=0, it moves by shift-1 (e.g. 0 -> -1, -1 -> -2).
-    """
-    if gui_state.label_capture is None or not gui_state.label_capture.isOpened():
-        # print("No video capture available for next_frame.") # Can be noisy
-        return
+    """Moves forward or backward by a number of frames and re-renders the image."""
+    if gui_state.label_capture and gui_state.label_capture.isOpened():
+        total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        if total_frames > 0:
+            gui_state.label_index = (gui_state.label_index + shift) % total_frames
+            render_image()
 
-    # Original logic for shift adjustment seems to be for specific keybinding behavior
-    if shift <= 0: 
-        shift -= 1 # e.g., arrow left (0) becomes -1, custom key (-1) becomes -2
-
-    amount_of_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-    if amount_of_frames == 0: return # No frames
-
-    gui_state.label_index += shift
-    # Ensure label_index wraps around correctly and stays within bounds
-    gui_state.label_index = int(gui_state.label_index % amount_of_frames)
-    if gui_state.label_index < 0: # Handle negative wrap-around
-        gui_state.label_index += int(amount_of_frames)
-    
-    render_image()
 
 @eel.expose
-def start_labeling(name: str) -> tuple[list[str], list[str]] | bool:
-    """
-    Initializes the labeling interface for a given dataset.
-    name: The name of the dataset to label.
-    Returns: Tuple of (behavior_names, color_map_strings) or False on failure.
-    """
-    if gui_state.proj is None:
-        print("Error: Project not loaded. Cannot start labeling.")
-        return False
-    if name not in gui_state.proj.datasets:
-        print(f"Error: Dataset '{name}' not found in project.")
-        return False
+def jump_to_instance(direction: int):
+    """Finds the next/previous instance and jumps the playhead to its start frame."""
+    if not gui_state.label_session_buffer:
+        eel.highlightBehaviorRow(None)(); return
 
-    # Reset labeling state
-    if gui_state.label_capture and gui_state.label_capture.isOpened():
-        gui_state.label_capture.release()
-    gui_state.label_capture = None
-    gui_state.label_index = -1
-    gui_state.label_videos = []
-    gui_state.label_vid_index = -1
-    gui_state.label_type = -1
-    gui_state.label_start = -1
-    gui_state.label_history = []
+    sorted_instances = sorted(enumerate(gui_state.label_session_buffer), key=lambda item: item[1]['start'])
+    if not sorted_instances: eel.highlightBehaviorRow(None)(); return
 
-    dataset: cbas.Dataset = gui_state.proj.datasets[name]
-    gui_state.label_dataset = dataset
+    current_frame = gui_state.label_index
+    target_item = None
 
-    whitelist = dataset.config.get("whitelist", []) # Use .get for safety
-    if not isinstance(whitelist, list): whitelist = []
-
-
-    gui_state.label_col_map = Colormap("seaborn:tab20")
-
-    # Collect all .mp4 video files from the project's recordings directory
-    all_project_videos = []
-    if gui_state.proj.recordings_dir and os.path.exists(gui_state.proj.recordings_dir):
-        for root_dir, _, files in os.walk(gui_state.proj.recordings_dir):
-            for file in files:
-                if file.endswith(".mp4"):
-                    all_project_videos.append(os.path.join(root_dir, file))
-    
-    if not all_project_videos:
-        print("No .mp4 files found in any recording directories.")
-        return False
-    
-    # Filter videos based on the dataset's whitelist
-    # A whitelist entry can be a partial path (e.g., "YYYYMMDD/CameraName-Session")
-    valid_videos_for_labeling = []
-    if not whitelist: # If whitelist is empty, consider all videos
-        print("Warning: Dataset whitelist is empty. Considering all project videos for labeling.")
-        valid_videos_for_labeling = all_project_videos
+    if direction > 0:
+        found = next((item for item in sorted_instances if item[1]['start'] > current_frame), None)
+        target_item = found or sorted_instances[0]
     else:
-        for video_path in all_project_videos:
-            # Normalize paths for consistent matching
-            normalized_video_path = os.path.normpath(video_path)
-            for wl_pattern in whitelist:
-                normalized_wl_pattern = os.path.normpath(wl_pattern)
-                if normalized_wl_pattern in normalized_video_path:
-                    valid_videos_for_labeling.append(video_path)
-                    break # Found a match, no need to check other whitelist patterns for this video
-    
-    if not valid_videos_for_labeling:
-        print(f"No videos found matching the whitelist for dataset '{name}'. Whitelist: {whitelist}")
-        return False
+        found = next((item for item in reversed(sorted_instances) if item[1]['start'] < current_frame), None)
+        target_item = found or sorted_instances[-1]
+            
+    if target_item:
+        original_index, instance_data = target_item
+        gui_state.label_index = instance_data['start']
+        gui_state.selected_instance_index = original_index
+        
+        eel.highlightBehaviorRow(instance_data['label'])()
+        render_image()
+    else:
+        eel.highlightBehaviorRow(None)()
 
-    gui_state.label_videos = sorted(list(set(valid_videos_for_labeling))) # Sort and unique
 
-    # Load the first video
-    if gui_state.label_videos:
-        next_video(0) # Call with 0 to load the first video (index 0 after modulo)
-        # update_counts() is called within next_video -> next_frame path
-    else: # Should be caught by 'if not valid_videos_for_labeling'
-        return False
+def add_instance_to_buffer():
+    """Helper function to create a new label instance and add it to the session buffer."""
+    if gui_state.label_type == -1 or gui_state.label_start == -1: return
 
-    dataset_behaviors = gui_state.label_dataset.labels.get("behaviors", [])
-    behavior_colors = [
-        str(gui_state.label_col_map(tab20_map(i))) for i in range(len(dataset_behaviors))
-    ]
-    return dataset_behaviors, behavior_colors
+    start_idx = min(gui_state.label_start, gui_state.label_index)
+    end_idx = max(gui_state.label_start, gui_state.label_index)
+    if start_idx == end_idx: return # Avoid zero-length labels
+
+    # Collision check with existing labels in the buffer
+    for inst in gui_state.label_session_buffer:
+        if max(start_idx, inst['start']) <= min(end_idx, inst['end']):
+            print(f"Collision detected. New label ({start_idx}-{end_idx}) overlaps with existing.")
+            eel.showErrorOnLabelTrainPage("Overlapping behavior region! Behavior not recorded.")
+            return
+
+    behavior_name = gui_state.label_dataset.labels["behaviors"][gui_state.label_type]
+    new_instance = {
+        "video": gui_state.label_videos[gui_state.label_vid_index],
+        "start": start_idx, "end": end_idx, "label": behavior_name,
+    }
+    gui_state.label_session_buffer.append(new_instance)
+    gui_state.label_history.append(new_instance)
+    update_counts()
 
 
 @eel.expose
 def label_frame(value: int):
-    """
-    Handles labeling actions based on user input (e.g., key press).
-    value: Integer representing the behavior index or action.
-    """
-    if gui_state.label_dataset is None or not gui_state.label_videos or gui_state.label_vid_index == -1:
-        print("Labeling not active or no video loaded.")
-        return
-
+    """Handles user keypresses to start, end, or change labels."""
+    if gui_state.label_dataset is None or not gui_state.label_videos: return
     behaviors = gui_state.label_dataset.labels.get("behaviors", [])
-    current_video_path = gui_state.label_videos[gui_state.label_vid_index]
+    if not 0 <= value < len(behaviors): return
 
-    # Check if clicked on an existing label to change it
-    existing_label_info = None
-    for b_idx, b_name in enumerate(behaviors):
-        if b_name not in gui_state.label_dataset.labels.get("labels", {}): continue
-        for i, inst in enumerate(gui_state.label_dataset.labels["labels"][b_name]):
-            if inst.get("video") == current_video_path and \
-               inst.get("start", -1) <= gui_state.label_index <= inst.get("end", -1):
-                existing_label_info = {"behavior_name": b_name, "instance_index": i, "original_value": b_idx}
-                break
-        if existing_label_info: break
-    
-    # Case 1: Change type of an existing label
-    if existing_label_info and gui_state.label_type == -1: # Not currently defining a new label
-        if 0 <= value < len(behaviors): # Ensure 'value' is a valid new behavior index
-            old_behavior_name = existing_label_info["behavior_name"]
-            instance_idx_to_move = existing_label_info["instance_index"]
+    # Check if we're clicking on an existing label to change it
+    clicked_instance_index = -1
+    for i, inst in enumerate(gui_state.label_session_buffer):
+        if inst.get("start", -1) <= gui_state.label_index <= inst.get("end", -1):
+            clicked_instance_index = i
+            break
             
-            if value == existing_label_info["original_value"]: # Clicked same behavior, do nothing
-                print("Clicked on existing label of the same type. No change.")
-                return
-
-            new_behavior_name = behaviors[value]
-            
-            instance_to_move = gui_state.label_dataset.labels["labels"][old_behavior_name].pop(instance_idx_to_move)
-            instance_to_move["label"] = new_behavior_name # Update label field in instance
-            
-            gui_state.label_dataset.labels["labels"].setdefault(new_behavior_name, []).append(instance_to_move)
-            print(f"Changed label: {instance_to_move} from '{old_behavior_name}' to '{new_behavior_name}'.")
-            
-            with open(gui_state.label_dataset.labels_path, "w") as file: # Use "w" to overwrite
-                yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
-            update_counts(); render_image()
-        else:
-            print(f"Invalid new behavior index {value} for changing label.")
-        return
-
-    # Case 2 & 3: Start or End a new label
-    if value >= len(behaviors): # Invalid behavior index for starting/ending a new label
-        print(f"Invalid behavior index {value} for new label.")
-        return False # Keep consistent with JS expectation
-
-    if value == gui_state.label_type: # End current labeling
-        try:
-            add_instance()
-        except Exception as e:
-            print(f"Error adding instance: {e}") # TODO: Send this error to UI via Eel
-            # Optionally, could use eel.showErrorModal(str(e)) if such a JS function exists
-        gui_state.label_type = -1 # Reset label type
-        gui_state.label_start = -1
-    elif gui_state.label_type == -1: # Start new labeling
-        gui_state.label_type = value
-        gui_state.label_start = gui_state.label_index
-        print(f"Started labeling for behavior: {behaviors[value]} at frame {gui_state.label_index}")
-    else: # Clicked a different behavior while one is active - cancel current
-        print(f"Cancelled labeling for behavior: {behaviors[gui_state.label_type]}. Starting new for {behaviors[value]}.")
-        gui_state.label_type = value
-        gui_state.label_start = gui_state.label_index
-    
-    render_image() # Update timeline with current selection
-
-
-def add_instance():
-    """Adds the currently defined (start-end-type) instance to the dataset labels."""
-    if gui_state.label_type == -1 or gui_state.label_start == -1:
-        print("Cannot add instance: Label type or start not set.")
-        return
-
-    start_index = min(gui_state.label_start, gui_state.label_index)
-    end_index = max(gui_state.label_start, gui_state.label_index)
-
-    if start_index == end_index : # Single frame label, make it inclusive
-        print(f"Warning: Labeling a single frame ({start_index}). This might be too short for some seq_len.")
-        # Depending on policy, you might want to enforce a minimum duration or allow it.
-        # For now, allow, but `convert_instances` might skip it if seq_len is too large.
-
-    current_video_path = gui_state.label_videos[gui_state.label_vid_index]
-    all_labels_dict = gui_state.label_dataset.labels.get("labels", {})
-    behaviors_list = gui_state.label_dataset.labels.get("behaviors", [])
-
-    # Check for collisions with existing labels in the current video
-    for behavior_name_iter in behaviors_list:
-        if behavior_name_iter not in all_labels_dict: continue
-        for existing_inst in all_labels_dict[behavior_name_iter]:
-            if existing_inst.get("video") == current_video_path:
-                existing_start = existing_inst.get("start", -1)
-                existing_end = existing_inst.get("end", -1)
-                # Check for overlap: (StartA <= EndB) and (EndA >= StartB)
-                if start_index <= existing_end and end_index >= existing_start:
-                    # More precise overlap check:
-                    # Overlap if not (new_end < old_start OR new_start > old_end)
-                    # i.e., overlap if (end_index >= existing_start AND start_index <= existing_end)
-                    print(f"Collision detected: New label ({start_index}-{end_index}) overlaps with existing "
-                          f"'{behavior_name_iter}' label ({existing_start}-{existing_end}).")
-                    eel.showError("Overlapping behavior region! Behavior not recorded.") # Example UI error
-                    raise Exception("Overlapping behavior region! Behavior not recorded.")
-
-
-    target_behavior_name = behaviors_list[gui_state.label_type]
-    new_instance = {
-        "video": current_video_path,
-        "start": start_index,
-        "end": end_index,
-        "label": target_behavior_name, # Store the name, not index
-    }
-
-    all_labels_dict.setdefault(target_behavior_name, []).append(new_instance)
-    gui_state.label_history.append(new_instance) # For undo functionality
-
-    with open(gui_state.label_dataset.labels_path, "w") as file:
-        yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
-    
-    print(f"Added instance: {new_instance}")
-    update_counts() # Update counts on UI
-
-@eel.expose
-def update_counts():
-    """
-    Updates the display of instance and frame counts.
-    The counts sent to the labeling UI are for the CURRENT VIDEO ONLY.
-    The metrics saved to the dataset config are for the ENTIRE DATASET.
-    """
-    if gui_state.label_dataset is None or gui_state.proj is None: return
-
-    dataset_labels = gui_state.label_dataset.labels
-    behaviors_list = dataset_labels.get("behaviors", [])
-    all_labels_by_behavior = dataset_labels.get("labels", {})
-
-    # Determine the current video path
-    current_video_path = None
-    if gui_state.label_videos and gui_state.label_vid_index >= 0:
-        current_video_path = gui_state.label_videos[gui_state.label_vid_index]
-
-    for b_name in behaviors_list:
-        all_instances_for_b = all_labels_by_behavior.get(b_name, [])
-        
-        # --- PER-VIDEO COUNTS for the UI ---
-        instances_in_current_video = 0
-        frames_in_current_video = 0
-        if current_video_path: # Only count if a video is loaded
-            for inst in all_instances_for_b:
-                # This is the crucial filter
-                if inst.get("video") == current_video_path:
-                    instances_in_current_video += 1
-                    frames_in_current_video += (inst.get("end", 0) - inst.get("start", 0) + 1)
-        
-        # Send the correct, filtered counts to the labeling UI
-        eel.updateLabelingStats(b_name, instances_in_current_video, frames_in_current_video)()
-
-        # --- TOTAL DATASET COUNTS for the main page metrics ---
-        total_instances_for_b = len(all_instances_for_b)
-        total_frames_for_b = 0
-        for inst in all_instances_for_b:
-            total_frames_for_b += (inst.get("end", 0) - inst.get("start", 0) + 1)
-            
-        # Update the dataset-wide metrics (used on the main Label/Train page)
-        gui_state.label_dataset.update_metric(b_name, "Train #", int(round(total_instances_for_b * 0.75)))
-        gui_state.label_dataset.update_metric(b_name, "Test #", total_instances_for_b - int(round(total_instances_for_b * 0.75)))
-        gui_state.label_dataset.update_metric(b_name, "Train Frames", int(round(total_frames_for_b * 0.75)))
-        gui_state.label_dataset.update_metric(b_name, "Test Frames", total_frames_for_b - int(round(total_frames_for_b * 0.75)))
-
-    # Update the file info display at the top of the labeling UI
-    if current_video_path:
-        try:
-            rel_path = os.path.relpath(current_video_path, start=gui_state.proj.path)
-        except ValueError:
-            rel_path = current_video_path
-        eel.updateFileInfo(rel_path)()
+    if clicked_instance_index != -1 and gui_state.label_type == -1:
+        # Change the type of an existing label in the buffer
+        new_behavior_name = behaviors[value]
+        gui_state.label_session_buffer[clicked_instance_index]['label'] = new_behavior_name
+        print(f"Changed instance {clicked_instance_index} to '{new_behavior_name}'.")
     else:
-        eel.updateFileInfo("No video loaded.")()
+        # Standard start/end labeling logic
+        if value == gui_state.label_type: # End current labeling
+            add_instance_to_buffer()
+            gui_state.label_type = -1; gui_state.label_start = -1
+        elif gui_state.label_type == -1: # Start new labeling
+            gui_state.label_type, gui_state.label_start = value, gui_state.label_index
+            gui_state.selected_instance_index = -1
+        else: # Switch active label type
+            gui_state.label_type, gui_state.label_start = value, gui_state.label_index
+            
+    render_image()
 
 
 @eel.expose
-def delete_instance():
-    """Deletes an existing labeled instance that the current frame falls into."""
-    if gui_state.label_dataset is None or not gui_state.label_videos or gui_state.label_vid_index == -1: return
-
-    behaviors = gui_state.label_dataset.labels.get("behaviors", [])
-    current_video_path = gui_state.label_videos[gui_state.label_vid_index]
-    labels_dict = gui_state.label_dataset.labels.get("labels", {})
-
-    found_and_deleted = False
-    for b_name in behaviors:
-        if b_name not in labels_dict: continue
-        instances_for_b = labels_dict[b_name]
-        for i, inst in enumerate(instances_for_b):
-            if inst.get("video") == current_video_path and \
-               inst.get("start", -1) <= gui_state.label_index <= inst.get("end", -1):
-                print(f"Deleting instance: {inst}")
-                del instances_for_b[i]
-                found_and_deleted = True
-                break # Found and deleted, exit inner loop
-        if found_and_deleted: break # Exit outer loop
-
-    if found_and_deleted:
-        with open(gui_state.label_dataset.labels_path, "w") as file:
-            yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
-        update_counts()
-        render_image()
-    else:
-        print("No label to delete at current frame.")
+def delete_instance_from_buffer():
+    """Finds and removes an instance from the session buffer at the current frame."""
+    if not gui_state.label_session_buffer: return
+    current_frame = gui_state.label_index
+    idx_to_remove = -1
+    for i, inst in enumerate(gui_state.label_session_buffer):
+        if inst.get("start", -1) <= current_frame <= inst.get("end", -1):
+            idx_to_remove = i
+            break
+    if idx_to_remove != -1:
+        removed_inst = gui_state.label_session_buffer.pop(idx_to_remove)
+        if removed_inst in gui_state.label_history:
+            gui_state.label_history.remove(removed_inst)
+        gui_state.selected_instance_index = -1
+        render_image(); update_counts()
 
 
 @eel.expose
-def pop_instance():
-    """Undoes the last added label instance."""
-    if not gui_state.label_history:
-        print("No label history to pop (undo).")
-        return
+def pop_instance_from_buffer():
+    """Undoes the last-added instance from the session buffer."""
+    if not gui_state.label_history: return
+    last_added = gui_state.label_history.pop()
+    try:
+        gui_state.label_session_buffer.remove(last_added)
+        gui_state.selected_instance_index = -1
+        render_image(); update_counts()
+    except ValueError:
+        print(f"Could not pop {last_added}, not found in buffer.")
 
-    last_added_inst = gui_state.label_history.pop()
-    target_behavior_name = last_added_inst["label"]
-    labels_dict = gui_state.label_dataset.labels.get("labels", {})
 
-    if target_behavior_name in labels_dict:
-        # Find and remove the exact instance (safer than relying on just last in list)
-        instances_for_b = labels_dict[target_behavior_name]
-        for i, inst in enumerate(instances_for_b):
-            if inst["video"] == last_added_inst["video"] and \
-               inst["start"] == last_added_inst["start"] and \
-               inst["end"] == last_added_inst["end"]:
-                del instances_for_b[i]
-                print(f"Popped (undid) instance: {last_added_inst}")
-                with open(gui_state.label_dataset.labels_path, "w") as file:
-                    yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
-                update_counts()
-                render_image()
-                return
-    print(f"Could not find instance {last_added_inst} in labels to pop.")
+# =================================================================
+# EEL-EXPOSED FUNCTIONS: DATASET & MODEL MANAGEMENT
+# =================================================================
 
+@eel.expose
+def create_dataset(name: str, behaviors: list[str], recordings_whitelist: list[str]) -> bool:
+    """Creates a new dataset via the project interface."""
+    if not gui_state.proj: return False
+    dataset = gui_state.proj.create_dataset(name, behaviors, recordings_whitelist)
+    if dataset:
+        gui_state.label_dataset = dataset
+        return True
+    return False
+
+
+@eel.expose
+def train_model(name: str, batch_size: str, learning_rate: str, epochs: str, sequence_length: str, training_method: str):
+    """Queues a training task for the specified dataset."""
+    if not gui_state.proj or name not in gui_state.proj.datasets: return
+    if not gui_state.training_thread: return
+
+    try:
+        task = workthreads.TrainingTask(
+            name=name, dataset=gui_state.proj.datasets[name],
+            behaviors=gui_state.proj.datasets[name].config.get('behaviors', []),
+            batch_size=int(batch_size), learning_rate=float(learning_rate),
+            epochs=int(epochs), sequence_length=int(sequence_length),
+            training_method=training_method
+        )
+        gui_state.training_thread.queue_task(task)
+        eel.updateTrainingStatusOnUI(name, "Training task queued...")()
+    except ValueError:
+        eel.showErrorOnLabelTrainPage("Invalid training parameters provided.")
+
+
+@eel.expose
+def start_classification(dataset_name_for_model: str, recordings_whitelist_paths: list[str]):
+    """Queues HDF5 files for classification using a specified model."""
+    if not gui_state.proj or not gui_state.classify_thread: return
+    model_to_use = gui_state.proj.models.get(dataset_name_for_model)
+    if not model_to_use: return
+
+    gui_state.classify_thread.start_inferring(model_to_use, recordings_whitelist_paths)
+
+    h5_files_to_classify = []
+    for rel_path in recordings_whitelist_paths:
+        search_root = os.path.join(gui_state.proj.recordings_dir, rel_path)
+        if os.path.isdir(search_root):
+            for dirpath, _, filenames in os.walk(search_root):
+                for filename in filenames:
+                    if filename.endswith("_cls.h5"):
+                        h5_files_to_classify.append(os.path.join(dirpath, filename))
+    
+    if h5_files_to_classify:
+        with gui_state.classify_lock:
+            for h5_file in h5_files_to_classify:
+                if h5_file not in gui_state.classify_tasks:
+                    gui_state.classify_tasks.append(h5_file)
+        print(f"Queued {len(h5_files_to_classify)} files for classification with '{model_to_use.name}'.")
+
+
+# =================================================================
+# RENDERING & INTERNAL LOGIC (Not Exposed)
+# =================================================================
 
 def render_image():
-    """Renders the current video frame with label overlays and sends to UI."""
-    if gui_state.label_capture is None or not gui_state.label_capture.isOpened() or gui_state.label_index < 0:
-        # print("Render image: capture not ready or index invalid.") # Can be noisy
-        eel.updateLabelImageSrc(None) # Send None to clear image if capture not ready
-        return
+    """Renders the current video frame with timeline overlays and sends to the UI."""
+    if not gui_state.label_capture or not gui_state.label_capture.isOpened():
+        eel.updateLabelImageSrc(None)(); return
 
     total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-    if total_frames == 0: 
-        eel.updateLabelImageSrc(None); return
+    if total_frames == 0: eel.updateLabelImageSrc(None)(); return
 
-    # Clamp label_index again just in case
     current_frame_idx = max(0, min(int(gui_state.label_index), int(total_frames) - 1))
     gui_state.label_capture.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
     ret, frame = gui_state.label_capture.read()
 
     if ret and frame is not None:
         frame_resized = cv2.resize(frame, (500, 500))
-        
-        # Create canvas for frame + timeline
-        canvas_height = frame_resized.shape[0] + 50 # 50px for timeline
-        canvas = np.zeros((canvas_height, frame_resized.shape[1], 3), dtype=np.uint8) # Start with black
-        
-        canvas[:-50, :, :] = frame_resized      # Copy frame
-        canvas[-50:-1, :, :] = 100              # Timeline background (grey)
-        # canvas[-1, :, :] = 0                  # Bottom border (black) - optional
+        canvas_height = frame_resized.shape[0] + 50
+        canvas = np.zeros((canvas_height, frame_resized.shape[1], 3), dtype=np.uint8)
+        canvas[:-50, :, :] = frame_resized
+        canvas[-50:-1, :, :] = 100
 
-        canvas_with_overlays = fill_colors(canvas) # Add label overlays to timeline part
+        canvas_with_overlays = fill_colors(canvas)
 
-        # Draw current frame marker on timeline
-        if total_frames > 0: # Avoid division by zero
-            marker_pos_x = int(frame_resized.shape[1] * current_frame_idx / total_frames)
-            marker_pos_x = np.clip(marker_pos_x, 0, frame_resized.shape[1] - 2) # Ensure within bounds for marker width
-            
-            # Timeline marker (e.g., red line)
-            cv2.line(canvas_with_overlays, 
-                     (marker_pos_x, canvas_height - 45), 
-                     (marker_pos_x, canvas_height - 5), 
-                     (0,0,255), thickness=2) # Red marker line
+        if total_frames > 0:
+            marker_x = int(frame_resized.shape[1] * current_frame_idx / total_frames)
+            cv2.line(canvas_with_overlays, (marker_x, canvas_height - 45), (marker_x, canvas_height - 5), (0, 0, 255), 2)
 
         _, encoded_frame = cv2.imencode(".jpg", canvas_with_overlays)
         blob = base64.b64encode(encoded_frame.tobytes()).decode("utf-8")
         eel.updateLabelImageSrc(blob)()
     else:
-        print(f"Failed to read frame {gui_state.label_index} from video.")
-        eel.updateLabelImageSrc(None) # Clear image on error
+        eel.updateLabelImageSrc(None)()
+
 
 def fill_colors(canvas_img: np.ndarray) -> np.ndarray:
-    """Draws colored bars on the timeline part of the canvas_img for existing labels."""
-    if gui_state.label_dataset is None or not gui_state.label_videos or gui_state.label_vid_index < 0:
+    """Draws colored bars on the timeline using the in-memory session buffer."""
+    if not all([gui_state.label_dataset, gui_state.label_videos, gui_state.label_capture, gui_state.label_capture.isOpened()]):
         return canvas_img
 
     behaviors = gui_state.label_dataset.labels.get("behaviors", [])
-    labels_data = gui_state.label_dataset.labels.get("labels", {})
-    current_video_path = gui_state.label_videos[gui_state.label_vid_index]
-    total_frames_in_video = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    if total_frames == 0: return canvas_img
 
-    if total_frames_in_video == 0: return canvas_img # No frames to draw on
+    timeline_y, timeline_h, timeline_w = canvas_img.shape[0] - 49, 45, canvas_img.shape[1]
 
-    timeline_y_start = canvas_img.shape[0] - 49 # Start y of the colorable timeline area
-    timeline_height = 45 # Height of the colorable area, leaving small borders
-    timeline_width_pixels = canvas_img.shape[1]
+    for i, inst in enumerate(gui_state.label_session_buffer):
+        try:
+            b_idx = behaviors.index(inst['label'])
+            color_hex = gui_state.label_behavior_colors[b_idx].lstrip("#")
+            bgr_color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
+            
+            start_px = int(timeline_w * inst.get("start", 0) / total_frames)
+            end_px = int(timeline_w * (inst.get("end", 0) + 1) / total_frames)
 
-    # Draw existing saved labels
-    for behavior_idx, behavior_name in enumerate(behaviors):
-        if behavior_name not in labels_data: continue
-        
-        # Get color for this behavior
-        color_hex = str(gui_state.label_col_map(tab20_map(behavior_idx))).lstrip("#")
-        # Convert hex to BGR (OpenCV format)
-        bgr_color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0)) # BGR order
+            if start_px < end_px:
+                cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
+                if i == gui_state.selected_instance_index:
+                    cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), (255, 255, 255), 3)
+        except (ValueError, IndexError):
+            continue
 
-        for inst in labels_data[behavior_name]:
-            if inst.get("video") == current_video_path:
-                start_f = inst.get("start", 0)
-                end_f = inst.get("end", 0)
-                
-                # Calculate pixel positions for start and end on the timeline
-                marker_pos_start_x = int(timeline_width_pixels * start_f / total_frames_in_video)
-                marker_pos_end_x = int(timeline_width_pixels * (end_f + 1) / total_frames_in_video) # +1 to make end inclusive for rect
-                marker_pos_start_x = np.clip(marker_pos_start_x, 0, timeline_width_pixels)
-                marker_pos_end_x = np.clip(marker_pos_end_x, 0, timeline_width_pixels)
-
-                if marker_pos_start_x < marker_pos_end_x: # Ensure width > 0
-                    cv2.rectangle(canvas_img, 
-                                  (marker_pos_start_x, timeline_y_start), 
-                                  (marker_pos_end_x, timeline_y_start + timeline_height -1), 
-                                  bgr_color, thickness=cv2.FILLED)
-
-    # Draw currently active (being defined) label
     if gui_state.label_type != -1 and gui_state.label_start != -1:
-        active_color_hex = str(gui_state.label_col_map(tab20_map(gui_state.label_type))).lstrip("#")
-        active_bgr_color = tuple(int(active_color_hex[i:i+2], 16) for i in (4, 2, 0))
-
-        temp_start_f = min(gui_state.label_start, gui_state.label_index)
-        temp_end_f = max(gui_state.label_start, gui_state.label_index)
-
-        marker_pos_S_active = int(timeline_width_pixels * temp_start_f / total_frames_in_video)
-        marker_pos_E_active = int(timeline_width_pixels * (temp_end_f + 1) / total_frames_in_video)
-        marker_pos_S_active = np.clip(marker_pos_S_active, 0, timeline_width_pixels)
-        marker_pos_E_active = np.clip(marker_pos_E_active, 0, timeline_width_pixels)
-
-        if marker_pos_S_active < marker_pos_E_active:
-            cv2.rectangle(canvas_img, 
-                          (marker_pos_S_active, timeline_y_start), 
-                          (marker_pos_E_active, timeline_y_start + timeline_height -1), 
-                          active_bgr_color, thickness=cv2.FILLED)
-            # Add a slightly different border or overlay to indicate it's "active"
-            cv2.rectangle(canvas_img, 
-                          (marker_pos_S_active, timeline_y_start), 
-                          (marker_pos_E_active, timeline_y_start + timeline_height -1), 
-                          (255,255,255), thickness=1) # White border
+        color_hex = gui_state.label_behavior_colors[gui_state.label_type].lstrip("#")
+        bgr_color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
+        start_f, end_f = min(gui_state.label_start, gui_state.label_index), max(gui_state.label_start, gui_state.label_index)
+        start_px, end_px = int(timeline_w * start_f / total_frames), int(timeline_w * (end_f + 1) / total_frames)
+        if start_px < end_px:
+            cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
+            cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), (255, 255, 255), 1)
 
     return canvas_img
 
 
-@eel.expose
-def get_record_tree() -> dict | bool:
-    """Fetches the recording directory tree structure."""
-    if gui_state.proj is None or not gui_state.proj.recordings_dir or \
-       not os.path.exists(gui_state.proj.recordings_dir):
-        return False # Project not loaded or recordings dir missing
+def update_counts():
+    """Updates instance/frame counts in the UI based on the current session buffer."""
+    if not gui_state.label_dataset: return
 
-    rt = {} # date_str -> list of session_dir_names
-    for date_dir_entry in os.scandir(gui_state.proj.recordings_dir):
-        if date_dir_entry.is_dir():
-            date_str = date_dir_entry.name
-            rt[date_str] = []
-            for session_dir_entry in os.scandir(date_dir_entry.path):
-                if session_dir_entry.is_dir():
-                    rt[date_str].append(session_dir_entry.name)
-    return rt if rt else False
-
-
-@eel.expose
-def create_dataset(name: str, behaviors: list[str], recordings_whitelist: list[str]) -> bool:
-    """
-    Creates a new dataset via the project interface.
-    recordings_whitelist: List of strings, each being "DATE_DIR/SESSION_DIR_NAME"
-    """
-    if gui_state.proj is None: return False
-    
-    # The cbas.Project.create_dataset expects full relative paths for whitelist
-    # The JS seems to send "DATE_DIR\\SESSION_DIR_NAME" or just "DATE_DIR"
-    # We need to ensure the format matches what cbas.Project expects or adapt here.
-    # Assuming cbas.Project.create_dataset handles the whitelist format appropriately now.
-    
-    dataset = gui_state.proj.create_dataset(name, behaviors, recordings_whitelist)
-    if dataset:
-        gui_state.label_dataset = dataset # Set as current for potential immediate labeling
-        return True
-    return False
-
-@eel.expose
-def train_model(name: str, batch_size: str, learning_rate: str, epochs: str, sequence_length: str, training_method = str):
-    """Queues a training task."""
-    if gui_state.proj is None or name not in gui_state.proj.datasets:
-        print(f"Cannot train: Dataset '{name}' not found or project not loaded.")
-        return
-    if gui_state.training_thread is None:
-        print("Cannot train: Training thread not initialized.")
-        return
-
-    dataset = gui_state.proj.datasets[name]
-    
-    try:
-        bs = int(batch_size)
-        lr = float(learning_rate)
-        ep = int(epochs)
-        sl = int(sequence_length)
-    except ValueError:
-        print("Error: Batch size, learning rate, epochs, and sequence length must be valid numbers.")
-        # eel.showError("Invalid training parameters.") # Example
-        return
-
-    task = workthreads.TrainingTask(
-        name=name, 
-        dataset=dataset, 
-        behaviors=dataset.config.get('behaviors', []), 
-        batch_size=bs, 
-        learning_rate=lr, 
-        epochs=ep, 
-        sequence_length=sl,
-        training_method=training_method
-    )
-    gui_state.training_thread.queue_task(task)
-    print(f"Training task for '{name}' queued.")
-    eel.updateTrainingStatusOnUI(name, "Training task queued...")() # Notify UI
-
-@eel.expose
-def start_classification(dataset_name_for_model: str, recordings_whitelist_paths: list[str]):
-    """
-    Starts classification on specified recordings using the model trained for dataset_name_for_model.
-    recordings_whitelist_paths: List of "DATE_DIR/SESSION_DIR_NAME" or "DATE_DIR" to classify.
-    """
-    if gui_state.proj is None or gui_state.classify_thread is None:
-        print("Project or classify thread not ready for start_classification.")
-        return
-    if dataset_name_for_model not in gui_state.proj.models:
-        print(f"Model for dataset '{dataset_name_for_model}' not found.")
-        # eel.showError(f"Model '{dataset_name_for_model}' not found.")
-        return
-
-    model_to_use = gui_state.proj.models[dataset_name_for_model]
-    
-    # The ClassificationThread's start_inferring takes a general whitelist (not used for task filtering).
-    # The tasks are added here based on recordings_whitelist_paths.
-    # This is okay, but start_inferring's whitelist argument becomes somewhat redundant.
-    gui_state.classify_thread.start_inferring(model_to_use, recordings_whitelist_paths) # Pass model object
-
-    h5_files_to_classify = []
-    for rel_path_pattern in recordings_whitelist_paths:
-        # Construct full path to search within. rel_path_pattern can be "DATE" or "DATE/SESSION"
-        search_root = os.path.join(gui_state.proj.recordings_dir, rel_path_pattern)
-        if os.path.isdir(search_root):
-            for dirpath, _, filenames in os.walk(search_root):
-                for filename in filenames:
-                    if filename.endswith("_cls.h5"): # Ensure it's an embedding file
-                        h5_files_to_classify.append(os.path.join(dirpath, filename))
-        else:
-            print(f"Warning: Whitelisted path for classification not found or not a directory: {search_root}")
-    
-    if h5_files_to_classify:
-        gui_state.classify_lock.acquire()
-        # Add only if not already in the queue to avoid duplicates
-        for h5_file in h5_files_to_classify:
-            if h5_file not in gui_state.classify_tasks:
-                gui_state.classify_tasks.append(h5_file)
-        gui_state.classify_lock.release()
-        print(f"Queued {len(h5_files_to_classify)} HDF5 files for classification using model '{model_to_use.name}'.")
+    if gui_state.label_videos and gui_state.label_vid_index >= 0:
+        rel_path = os.path.relpath(gui_state.label_videos[gui_state.label_vid_index], start=gui_state.proj.path)
+        eel.updateFileInfo(rel_path)()
     else:
-        print(f"No HDF5 files found to classify for whitelist: {recordings_whitelist_paths}")
+        eel.updateFileInfo("No video loaded.")()
 
-# It's good practice to have a single point for eel.expose definitions for functions
-# that are called from JS but might be defined elsewhere in Python if not directly in this file.
-# However, since these are callbacks from JS, they are fine here.
-
-# eel.expose for updateCount is in this file.
-# eel.expose for updateFileInfo is in this file.
-# eel.expose for updateLabelImageSrc is in this file.
-# eel.expose for updateTrainingStatus (used by workthreads.py) needs to be defined here
-# if not already in app.py or another globally accessible place.
-
-# @eel.expose
-# def updateTrainingStatus(dataset_name: str, message: str):
-    # """JS callback to update training status on the UI."""
-    # # This is a Python function callable from JS.
-    # # The actual call from Python to JS would be eel.js_update_training_status(dataset_name, message)
-    # # So, the JS side needs:
-    # # eel.expose(js_update_training_status);
-    # # function js_update_training_status(dataset_name, message) { /* update UI */ }
-    # # This Python function is here if JS needs to call Python for some reason about training status,
-    # # which is less common. The typical flow is Python calling JS.
-    # # For Python to call JS:
-    # # In workthreads.py: eel.js_side_update_training_status(task.name, "message")()
-    # # In JS:
-    # # eel.expose(js_side_update_training_status);
-    # # function js_side_update_training_status(dataset_name, message) {
-    # #    document.getElementById('status-for-' + dataset_name).innerText = message;
-    # # }
-    # print(f"UI Event (Python side): updateTrainingStatus for {dataset_name}: {message}")
-    # # This function, if called from JS, doesn't do much unless it's meant to trigger Python logic.
-    # # If the goal is Python updating JS, this eel.expose is not what's used by workthreads.
-    # pass
-
-# # Similarly for updateCount, updateFileInfo, updateLabelImageSrc, if they are meant
-# # to be called *from Python to update JS*, the JS functions need to be exposed in JS,
-# # and Python calls them using eel.js_function_name().
-# # The @eel.expose here makes them callable *from JS to Python*.
+    behaviors = gui_state.label_dataset.labels.get("behaviors", [])
+    counts = {b: {'instances': 0, 'frames': 0} for b in behaviors}
+    
+    for inst in gui_state.label_session_buffer:
+        b_name = inst.get('label')
+        if b_name in counts:
+            counts[b_name]['instances'] += 1
+            counts[b_name]['frames'] += (inst.get("end", 0) - inst.get("start", 0) + 1)
+    
+    for b_name, data in counts.items():
+        eel.updateLabelingStats(b_name, data['instances'], data['frames'])()
