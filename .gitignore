@@ -3,3 +3,17 @@ venv/
 dist/
 build/
 *.pyc
+
+# ==================================
+# Python Caches & Virtual Environments
+# ==================================
+__pycache__/
+venv/
+deactivate/
+*.pyc
+
+# ==================================
+# Editor-specific files
+# ==================================
+.vs/
+.vscode/
