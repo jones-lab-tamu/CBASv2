@@ -166,7 +166,7 @@ function handleBehaviorSelection(checkbox) {
     }
     
     clearTimeout(actogramDebounceTimer);
-    actogramDebounceTimer = setTimeout(generateAndDisplayActograms, 400);
+    actogramDebounceTimer = setTimeout(generateAndDisplayActograms, 200);
 }
 
 /**
@@ -246,7 +246,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             elem.addEventListener(eventType, () => {
                 clearTimeout(actogramDebounceTimer);
-                actogramDebounceTimer = setTimeout(generateAndDisplayActograms, 400);
+                actogramDebounceTimer = setTimeout(generateAndDisplayActograms, 200);
             });
         }
     });

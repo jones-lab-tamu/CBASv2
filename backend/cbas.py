@@ -672,54 +672,72 @@ class Project:
         """Converts labeled instances from dicts into training-ready tensors."""
         seqs, labels = [], []
         half_seqlen = seq_len // 2
-        total_insts = len(insts)
 
-        for i, inst in enumerate(insts):
-            if progress_callback and i % 5 == 0:
-                progress_callback((i + 1) / total_insts * 100)
-            
+        # 1. Group instances by their source video file to avoid redundant H5 file reads.
+        instances_by_video = {}
+        for inst in insts:
             video_path = inst.get("video")
-            if not video_path: continue
+            if video_path:
+                instances_by_video.setdefault(video_path, []).append(inst)
+        
+        total_videos = len(instances_by_video)
+        
+        # 2. Iterate through each unique video file, loading it only ONCE.
+        for i, (video_path, video_instances) in enumerate(instances_by_video.items()):
+            if progress_callback:
+                progress_callback((i + 1) / total_videos * 100)
+            
             cls_path = video_path.replace(".mp4", "_cls.h5")
-            if not os.path.exists(cls_path): continue
+            if not os.path.exists(cls_path):
+                print(f"Warning: H5 file not found, skipping instances for {video_path}")
+                continue
 
             try:
-                with h5py.File(cls_path, "r") as f: cls_arr = f["cls"][:]
-            except Exception:
+                with h5py.File(cls_path, "r") as f:
+                    # Load the entire H5 data for this video just once.
+                    cls_arr = f["cls"][:]
+            except Exception as e:
+                print(f"Warning: Could not read H5 file {cls_path}: {e}")
                 continue
             
-            if cls_arr.ndim < 2 or cls_arr.shape[0] < seq_len: continue
+            if cls_arr.ndim < 2 or cls_arr.shape[0] < seq_len:
+                continue
             
+            # Center the embeddings for this video once.
             cls_centered = cls_arr - np.mean(cls_arr, axis=0)
             
-            # Ensure that start and end frames are always treated as integers.
-            start = int(inst.get("start", -1))
-            end = int(inst.get("end", -1))
-            
-            if start == -1 or end == -1: continue
-
-            valid_start = max(half_seqlen, start)
-            # Ensure valid_end is also an integer before use
-            valid_end = int(min(cls_centered.shape[0] - half_seqlen, end))
-
-            # The range function requires integer arguments.
-            for frame_idx in range(valid_start, valid_end):
-                window_start = frame_idx - half_seqlen
-                window_end = frame_idx + half_seqlen + 1
+            # 3. Now process all instances belonging to this specific video.
+            for inst in video_instances:
+                start = int(inst.get("start", -1))
+                end = int(inst.get("end", -1))
                 
-                # This check is redundant if the loop range is correct, but safe to keep.
-                if window_end > cls_centered.shape[0]: continue
+                if start == -1 or end == -1:
+                    continue
 
-                window = cls_centered[window_start:window_end]
-                if window.shape[0] != seq_len: continue
-                
-                seqs.append(torch.from_numpy(window).float())
-                try:
-                    labels.append(torch.tensor(behaviors.index(inst["label"])).long())
-                except ValueError:
-                    seqs.pop()
+                valid_start = max(half_seqlen, start)
+                valid_end = int(min(cls_centered.shape[0] - half_seqlen, end))
+
+                for frame_idx in range(valid_start, valid_end):
+                    window_start = frame_idx - half_seqlen
+                    window_end = frame_idx + half_seqlen + 1
+                    
+                    if window_end > cls_centered.shape[0]:
+                        continue
+
+                    window = cls_centered[window_start:window_end]
+                    if window.shape[0] != seq_len:
+                        continue
+                    
+                    try:
+                        seqs.append(torch.from_numpy(window).float()) # Use .float() for safety
+                        labels.append(torch.tensor(behaviors.index(inst["label"])).long())
+                    except ValueError:
+                        # This happens if an instance's label is not in the official behavior list.
+                        # We simply skip this invalid instance.
+                        if seqs: seqs.pop() # Remove the corresponding sequence
         
-        if not seqs: return [], []
+        if not seqs:
+            return [], []
         
         shuffled_pairs = list(zip(seqs, labels))
         random.shuffle(shuffled_pairs)

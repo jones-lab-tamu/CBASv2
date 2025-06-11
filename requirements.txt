@@ -14,9 +14,7 @@ gevent
 gevent-websocket
 
 # --- Machine Learning & Data Processing ---
-# Note: torch and transformers versions are usually linked.
 # Pip will handle installing the correct compatible versions.
-torch
 transformers
 numpy           # ==1.26.4
 pandas          # ==2.2.2

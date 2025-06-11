@@ -16,6 +16,7 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API
 import os
 import sys
 import socket
+import torch
 
 # Local application imports
 import eel
@@ -56,6 +57,22 @@ def find_available_port(start_port=8000, max_tries=100) -> int:
 
 def main():
     """Initializes the backend server and waits for the Electron app to connect."""
+
+    # GPU DIAGNOSTIC CODE 
+    print("--- PyTorch GPU Diagnostics ---")
+    try:
+        is_available = torch.cuda.is_available()
+        print(f"CUDA available: {is_available}")
+        if is_available:
+            print(f"Device count: {torch.cuda.device_count()}")
+            print(f"Current device: {torch.cuda.current_device()}")
+            print(f"Device name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+        else:
+            print("PyTorch cannot find a CUDA-enabled GPU.")
+            print("Possible reasons: NVIDIA drivers not installed, CUDA toolkit mismatch, or unsupported GPU.")
+    except Exception as e:
+        print(f"An error occurred during GPU diagnostics: {e}")
+    print("-----------------------------")
 
     # Eel needs to know where the 'frontend' folder is to find eel.js
     eel.init('frontend')
