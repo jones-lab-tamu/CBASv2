@@ -124,17 +124,26 @@ class DinoEncoder(nn.Module):
     def __init__(self, device="cuda"):
         super(DinoEncoder, self).__init__()
         self.device = device
+        self.model = None # <-- CHANGE: Initialize model as None
 
-        self.model = transformers.AutoModel.from_pretrained("facebook/dinov2-base").to(
-            device
-        )
-        self.model.eval()
+    def _initialize_model(self):
+        """Lazy initializer for the model."""
+        if self.model is None:
+            print("Initializing DINOv2 model (this may download on first run)...")
+            # This is the slow, blocking call
+            self.model = transformers.AutoModel.from_pretrained("facebook/dinov2-base").to(
+                self.device
+            )
+            self.model.eval()
 
-        # We obviously dont want to train DINO ourselves.
-        for param in self.model.parameters():
-            param.requires_grad = False
+            # We obviously dont want to train DINO ourselves.
+            for param in self.model.parameters():
+                param.requires_grad = False
+            print("DINOv2 model initialized.")
 
     def forward(self, x):
+        self._initialize_model()
+
         # B: number of batches
         # S: input elements per sample
         # H: height
@@ -157,6 +166,7 @@ class DinoEncoder(nn.Module):
         cls = out.last_hidden_state[:, 0, :].reshape(B, S, 768)
 
         return cls
+
 
 
 class DatasetLoader(torch.utils.data.Dataset):

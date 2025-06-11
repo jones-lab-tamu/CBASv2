@@ -22,9 +22,14 @@ from watchdog.events import FileSystemEventHandler
 class EncodeThread(threading.Thread):
     def __init__(self, device):
         threading.Thread.__init__(self)
+        self.device = device
+        # This is now a fast operation thanks to our change in cbas.py
+        self.encoder = cbas.DinoEncoder(device=self.device)
 
-        self.cuda_stream = torch.cuda.Stream(device=device)
-        self.encoder = cbas.DinoEncoder()
+        if self.device.type == 'cuda':
+            self.cuda_stream = torch.cuda.Stream(device=self.device)
+        else:
+            self.cuda_stream = None
 
     def run(self):
         while True:
@@ -35,15 +40,20 @@ class EncodeThread(threading.Thread):
                 file = gui_state.encode_tasks.pop(0)
                 gui_state.encode_lock.release()
 
-                with torch.cuda.stream(self.cuda_stream):
+                # The slow model download will happen here, inside the background thread, on the first call
+                if self.cuda_stream:
+                    with torch.cuda.stream(self.cuda_stream):
+                        out_file = cbas.encode_file(self.encoder, file)
+                else:
                     out_file = cbas.encode_file(self.encoder, file)
-                    if out_file is None:
-                        print(f"Failed to encode unfinished video file '{file}'")
-                    else:
-                        print(f"Encoded '{file}' as '{out_file}'")
-                        gui_state.classify_lock.acquire()
-                        gui_state.classify_tasks.append(out_file)
-                        gui_state.classify_lock.release()
+
+                if out_file is None:
+                    print(f"Failed to encode unfinished video file '{file}'")
+                else:
+                    print(f"Encoded '{file}' as '{out_file}'")
+                    gui_state.classify_lock.acquire()
+                    gui_state.classify_tasks.append(out_file)
+                    gui_state.classify_lock.release()
 
             else:
                 gui_state.encode_lock.release()
@@ -51,8 +61,6 @@ class EncodeThread(threading.Thread):
             time.sleep(1)
 
     def get_id(self):
-
-        # returns id of the respective thread
         if hasattr(self, "_thread_id"):
             return self._thread_id
         for id, thread in threading._active.items():
@@ -71,18 +79,20 @@ class EncodeThread(threading.Thread):
 class ClassificationThread(threading.Thread):
     def __init__(self, device):
         threading.Thread.__init__(self)
-
-        self.cuda_stream = torch.cuda.Stream(device=device)
+        self.device = device
         self.running = False
 
-        self.device = device
+        if self.device.type == 'cuda':
+            self.cuda_stream = torch.cuda.Stream(device=self.device)
+        else:
+            self.cuda_stream = None
     
     def start_inferring(self, model, whitelist):
         gui_state.classify_lock.acquire()
         self.model = model
         self.whitelist = whitelist
 
-        weights = torch.load(model.weights_path, weights_only=False)
+        weights = torch.load(model.weights_path, map_location=self.device) # Use map_location for robustness
 
         torch_model = classifier_head.classifier(
             in_features=768,
@@ -93,12 +103,10 @@ class ClassificationThread(threading.Thread):
         torch_model.eval()
 
         self.torch_model = torch_model.to(self.device)
-
         self.running = True
-
         gui_state.classify_lock.release()
 
-        print(f"Loaded model '{model.name}' for classification")
+        print(f"Loaded model '{model.name}' for classification on device '{self.device}'")
 
     def run(self):
         while True:
@@ -108,20 +116,23 @@ class ClassificationThread(threading.Thread):
                 if num_classify_tasks > 0:
                     file = gui_state.classify_tasks.pop(0)
                     gui_state.classify_lock.release()
-                    with torch.cuda.stream(self.cuda_stream):
+
+                    if self.cuda_stream:
+                        with torch.cuda.stream(self.cuda_stream):
+                            out_file = cbas.infer_file(file, self.torch_model, self.model.name, self.model.config["behaviors"], self.model.config["seq_len"], str(self.device))
+                    else:
                         out_file = cbas.infer_file(file, self.torch_model, self.model.name, self.model.config["behaviors"], self.model.config["seq_len"], str(self.device))
-                        if out_file is None:
-                            print(f"Failed to classify file '{file}")
-                        else:
-                            print(f"Classified file '{file}' to '{out_file}'")
+                    
+                    if out_file is None:
+                        print(f"Failed to classify file '{file}")
+                    else:
+                        print(f"Classified file '{file}' to '{out_file}'")
                 else:
                     gui_state.classify_lock.release()
 
             time.sleep(1)
 
     def get_id(self):
-
-        # returns id of the respective thread
         if hasattr(self, "_thread_id"):
             return self._thread_id
         for id, thread in threading._active.items():
@@ -173,7 +184,7 @@ def plot_report_list_metric(report_list, metric, behaviors, path):
     plt.legend(title="Behaviors")
     plt.grid(True)
 
-    os.makedirs(path, exist_ok=True)
+    os.makedirs(path, exist_ok=-1)
 
     filename = os.path.join(path, f"{metric}-report.png")
     plt.savefig(filename, bbox_inches="tight", dpi=300)
@@ -182,10 +193,12 @@ def plot_report_list_metric(report_list, metric, behaviors, path):
 class TrainingThread(threading.Thread):
     def __init__(self, device):
         threading.Thread.__init__(self)
-
         self.device = device
 
-        self.cuda_stream = torch.cuda.Stream(device=device)
+        if self.device.type == 'cuda':
+            self.cuda_stream = torch.cuda.Stream(device=device)
+        else:
+            self.cuda_stream = None
 
         self.training_queue_lock = threading.Lock()
         self.training_queue: list[TrainingTask] = []
@@ -198,70 +211,73 @@ class TrainingThread(threading.Thread):
                 task = self.training_queue.pop(0)
                 self.training_queue_lock.release()
 
-                with torch.cuda.stream(self.cuda_stream):
-                    train_ds, test_ds = gui_state.proj.load_dataset(task.name)
-
-                    model_dir = os.path.join(gui_state.proj.models_dir, task.name)
-                    model_path = os.path.join(model_dir, "model.pth")
-                    model_config_path = os.path.join(model_dir, "config.yaml")
-
-                    model, report_list, best_epoch = cbas.train_lstm_model(train_ds, test_ds, task.sequence_length, task.behaviors, lr=task.learning_rate, batch_size=task.batch_size, epochs=task.epochs, device=self.device)
-
-                    best_report = report_list[best_epoch]
-
-                    report_dict = best_report.sklearn_report
-
-                    if not os.path.exists(model_dir):
-                        os.mkdir(model_dir)
-
-                    torch.save(model.state_dict(), model_path)
-
-                    with open(task.dataset.config_path, "w+") as file:
-                        yaml.dump(task.dataset.config, file, allow_unicode=True)
-
-                    behaviors = task.dataset.config["behaviors"]
-
-                    for b in behaviors:
-                        task.dataset.update_metric(b, "F1 Score", round(report_dict[b]["f1-score"], 2))
-                        task.dataset.update_metric(b, "Recall", round(report_dict[b]["recall"], 2))
-                        task.dataset.update_metric(b, "Precision", round(report_dict[b]["precision"], 2))
-
-                    model_config = {"seq_len": task.sequence_length, "behaviors": task.behaviors}
-
-                    performance_path = os.path.join(task.dataset.path, "performance.yaml")
-                    with open(performance_path, 'w+') as file:
-                        yaml.dump(best_report.sklearn_report, file, allow_unicode=True)
-
-                    save_confusion_matrix_plot(best_report.confusion_matrix, os.path.join(task.dataset.path, "confusion_matrix.png"))
-
-                    if not os.path.exists(os.path.join(task.dataset.path, "confusion_matrices")):
-                        os.mkdir(os.path.join(task.dataset.path, "confusion_matrices"))
-
-                    for i, report in enumerate(report_list):
-                        save_confusion_matrix_plot(report.confusion_matrix, os.path.join(task.dataset.path, "confusion_matrices", f"epoch_{i}.png"))
-
-                    plot_report_list_metric(report_list, "f1-score", behaviors, task.dataset.path)
-                    plot_report_list_metric(report_list, "recall", behaviors, task.dataset.path)
-                    plot_report_list_metric(report_list, "precision", behaviors, task.dataset.path)
-
-                    with open(model_config_path, "w+") as file:
-                        yaml.dump(model_config, file, allow_unicode=True)
-                    
-                    gui_state.proj.models[task.name] = cbas.Model(model_dir)
-
+                if self.cuda_stream:
+                    with torch.cuda.stream(self.cuda_stream):
+                        self._run_task(task)
+                else:
+                    self._run_task(task)
             else:
                 self.training_queue_lock.release()
 
             time.sleep(1)
     
+    def _run_task(self, task):
+        """Helper method to contain the training logic."""
+        train_ds, test_ds = gui_state.proj.load_dataset(task.name)
+
+        model_dir = os.path.join(gui_state.proj.models_dir, task.name)
+        model_path = os.path.join(model_dir, "model.pth")
+        model_config_path = os.path.join(model_dir, "config.yaml")
+
+        model, report_list, best_epoch = cbas.train_lstm_model(train_ds, test_ds, task.sequence_length, task.behaviors, lr=task.learning_rate, batch_size=task.batch_size, epochs=task.epochs, device=self.device)
+
+        best_report = report_list[best_epoch]
+        report_dict = best_report.sklearn_report
+
+        if not os.path.exists(model_dir):
+            os.mkdir(model_dir)
+
+        torch.save(model.state_dict(), model_path)
+
+        with open(task.dataset.config_path, "w+") as file:
+            yaml.dump(task.dataset.config, file, allow_unicode=True)
+
+        behaviors = task.dataset.config["behaviors"]
+
+        for b in behaviors:
+            task.dataset.update_metric(b, "F1 Score", round(report_dict[b]["f1-score"], 2))
+            task.dataset.update_metric(b, "Recall", round(report_dict[b]["recall"], 2))
+            task.dataset.update_metric(b, "Precision", round(report_dict[b]["precision"], 2))
+
+        model_config = {"seq_len": task.sequence_length, "behaviors": task.behaviors}
+
+        performance_path = os.path.join(task.dataset.path, "performance.yaml")
+        with open(performance_path, 'w+') as file:
+            yaml.dump(best_report.sklearn_report, file, allow_unicode=True)
+
+        save_confusion_matrix_plot(best_report.confusion_matrix, os.path.join(task.dataset.path, "confusion_matrix.png"))
+
+        if not os.path.exists(os.path.join(task.dataset.path, "confusion_matrices")):
+            os.mkdir(os.path.join(task.dataset.path, "confusion_matrices"))
+
+        for i, report in enumerate(report_list):
+            save_confusion_matrix_plot(report.confusion_matrix, os.path.join(task.dataset.path, "confusion_matrices", f"epoch_{i}.png"))
+
+        plot_report_list_metric(report_list, "f1-score", behaviors, task.dataset.path)
+        plot_report_list_metric(report_list, "recall", behaviors, task.dataset.path)
+        plot_report_list_metric(report_list, "precision", behaviors, task.dataset.path)
+
+        with open(model_config_path, "w+") as file:
+            yaml.dump(model_config, file, allow_unicode=True)
+        
+        gui_state.proj.models[task.name] = cbas.Model(model_dir)
+
     def queue_task(self, task):
         self.training_queue_lock.acquire()
         self.training_queue.append(task)
         self.training_queue_lock.release()
 
     def get_id(self):
-
-        # returns id of the respective thread
         if hasattr(self, "_thread_id"):
             return self._thread_id
         for id, thread in threading._active.items():
@@ -291,7 +307,6 @@ class VideoFileWatcher(FileSystemEventHandler):
             number = int(basename.split('.')[0].split('_')[-1])
 
             if number != 0:
-                # Encode number with 5 digits
                 prev_file_path = os.path.join(dirname, basename.split('_')[0] + '_' + str(number - 1).zfill(5) + '.mp4')
 
                 gui_state.encode_lock.acquire()
@@ -302,15 +317,18 @@ class VideoFileWatcher(FileSystemEventHandler):
 
 @eel.expose
 def start_threads():
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f"--- CBAS is running on device: {device} ---")
+
     gui_state.encode_lock = threading.Lock()
-    gui_state.encode_thread = EncodeThread(torch.device('cuda:0'))
+    gui_state.encode_thread = EncodeThread(device)
     gui_state.encode_thread.start()
 
-    gui_state.training_thread = TrainingThread(torch.device('cuda:0'))
-    gui_state.training_thread .start()
+    gui_state.training_thread = TrainingThread(device)
+    gui_state.training_thread.start()
 
     gui_state.classify_lock = threading.Lock()
-    gui_state.classify_thread = ClassificationThread(torch.device('cuda:0'))
+    gui_state.classify_thread = ClassificationThread(device)
     gui_state.classify_thread.start()
 
 @eel.expose
