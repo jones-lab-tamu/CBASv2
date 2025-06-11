@@ -75,7 +75,8 @@
       1. Type `pip install -r requirements.txt`
       2. Type `npm install`
    9. Install Pytorch
-      1.  Type `pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`
+      1.  IF YOU HAVE AN NVIDIA GPU: Type `pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`
+	  2.  IF NOT: Type `pip3 install torch torchvision torchaudio`
   1.  Install transformer models
       1.  Type `pip install -q git+https://github.com/huggingface/transformers.git`
       2.  Remember to be patient!
@@ -94,6 +95,6 @@
 ## 6. Automatically updating CBAS (when needed)
    1. In command prompt, enter the CBASv2 folder
       1. Example: type `cd C:\Users\Jones-Lab\Documents\CBASv2`
-   2. Type `git pull origin`
+   2. Type `git pull origin v2-stable`
 
 
