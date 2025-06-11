@@ -13,6 +13,41 @@ import cbas
 
 import gui_state
 
+import shutil
+from datetime import datetime
+
+@eel.expose
+def import_videos(experiment_name, subject_name, file_paths):
+    """
+    Imports external video files into the CBAS project structure.
+    """
+    try:
+        # Create the 'experiment' directory (e.g., '20240523-CircadianStudy')
+        date_str = datetime.now().strftime("%Y%m%d")
+        experiment_dir_name = f"{date_str}-{experiment_name}"
+        experiment_path = os.path.join(gui_state.proj.recordings_dir, experiment_dir_name)
+        os.makedirs(experiment_path, exist_ok=True)
+
+        # Create the 'subject' directory (e.g., 'Mouse1')
+        subject_path = os.path.join(experiment_path, subject_name)
+        os.makedirs(subject_path, exist_ok=True)
+
+        # Copy each selected video file
+        for i, src_path in enumerate(file_paths):
+            # To avoid name collisions and maintain order, we can rename files.
+            # E.g., imported_00000.mp4, imported_00001.mp4
+            # This mimics the ffmpeg segmented output.
+            file_name = f"imported_{str(i).zfill(5)}.mp4"
+            dest_path = os.path.join(subject_path, file_name)
+            
+            print(f"Copying '{src_path}' to '{dest_path}'")
+            shutil.copy(src_path, dest_path)
+            
+        return True
+    except Exception as e:
+        print(f"Error during video import: {e}")
+        return False
+
 @eel.expose
 def get_camera_settings(camera_name):
     camera = gui_state.proj.cameras[camera_name]

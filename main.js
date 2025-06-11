@@ -68,3 +68,15 @@ ipc.on('open-file-dialog', async function (event) {
     }
 })
 
+ipc.on('select-videos-dialog', async function (event) { 
+    let result = await dialog.showOpenDialog({
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+            { name: 'Videos', extensions: ['mp4'] }
+        ]
+    });
+
+    if (!result.canceled) {
+        event.sender.send('selected-videos', result.filePaths);
+    }
+});

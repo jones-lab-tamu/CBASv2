@@ -7,6 +7,9 @@ let routing = false
 let cameraModal = new bootstrap.Modal(document.getElementById('addCamera'))
 let statusModal = new bootstrap.Modal(document.getElementById('statusModal'))
 
+let importVideosModal = new bootstrap.Modal(document.getElementById('importVideosModal'));
+let filesToImport = []; // To store selected file paths
+
 function routeRecord() {
     routing = true
     window.open('./record.html', '_self');
@@ -461,4 +464,66 @@ function inferLoadBar(progresses) {
         }, 1000)
     }
 
+}
+
+function showImportModal() {
+    // Reset the modal state
+    document.getElementById('import-experiment-name').value = '';
+    document.getElementById('import-subject-name').value = '';
+    document.getElementById('selected-files-list').innerHTML = '';
+    document.getElementById('selected-files-label').style.display = 'none';
+    document.getElementById('import-confirm-button').disabled = true;
+    filesToImport = [];
+    
+    importVideosModal.show();
+}
+
+function selectVideosToImport() {
+    // This will trigger the file dialog in main.js
+    ipc.send('select-videos-dialog');
+}
+
+// Listen for the response from the main process
+ipc.on('selected-videos', (event, filePaths) => {
+    if (filePaths && filePaths.length > 0) {
+        filesToImport = filePaths;
+        const list = document.getElementById('selected-files-list');
+        const label = document.getElementById('selected-files-label');
+        list.innerHTML = ''; // Clear previous list
+        
+        filePaths.forEach(path => {
+            const li = document.createElement('li');
+            // Show only the filename for brevity
+            li.textContent = path.split('\\').pop().split('/').pop();
+            list.appendChild(li);
+        });
+        
+        label.style.display = 'block';
+        document.getElementById('import-confirm-button').disabled = false;
+    }
+});
+
+
+async function importVideos() {
+    const experimentName = document.getElementById('import-experiment-name').value;
+    const subjectName = document.getElementById('import-subject-name').value;
+
+    if (!experimentName || !subjectName || filesToImport.length === 0) {
+        alert('Please provide an experiment name, a subject name, and select video files.');
+        return;
+    }
+
+    // Call the new backend function
+    const success = await eel.import_videos(experimentName, subjectName, filesToImport)();
+
+    if (success) {
+        importVideosModal.hide();
+        // We can reload the project's data, but for a minimal fix,
+        // a page refresh is simplest. Let's just alert the user.
+        alert('Videos imported successfully! Please refresh the page or re-open the project to see the new recordings.');
+        // For a slightly better experience, you could automatically trigger a refresh:
+        // window.location.reload();
+    } else {
+        alert('Failed to import videos. Check the console for errors.');
+    }
 }

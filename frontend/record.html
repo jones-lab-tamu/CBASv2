@@ -211,6 +211,34 @@
     <div class="fab" onclick="updateCameras()">
       <i class="bi bi-arrow-clockwise" style="font-size: 50px"></i>
     </div>
+	<div class="fab" onclick="showImportModal()">
+      <i class="bi bi-folder-plus" style="font-size: 50px;"></i>
+    </div>
+  </div>
+
+  <!-- Import Modal *** -->
+  <div class="modal" tabindex="-1" id="importVideosModal">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Import Videos</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p>This will copy external videos into your project.</p>
+          <p>Experiment Name (e.g., 'CircadianStudy'):</p>
+          <input type="text" class="form-control" id="import-experiment-name" style="margin-bottom: 10px;" />
+          <p>Subject Name (e.g., 'Mouse1'):</p>
+          <input type="text" class="form-control" id="import-subject-name" style="margin-bottom: 20px;" />
+          <p id="selected-files-label" style="display: none;">Selected Files:</p>
+          <ul id="selected-files-list"></ul>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="selectVideosToImport()">Select Videos...</button>
+          <button type="button" class="btn btn-primary" id="import-confirm-button" onclick="importVideos()" disabled>Import</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="cover-spin"></div>
