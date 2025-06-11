@@ -93,10 +93,14 @@ eel.browsers.set_path("electron", "node_modules/electron/dist/electron")
 eel.init("frontend")
 
 electron_path = os.path.abspath("node_modules/electron/dist/electron")
-subprocess.Popen([electron_path, ".", str(port), "--trace-warnings"]) 
 
-
+# Bugfix: Start the Eel server FIRST.
+# The block=False argument makes this non-blocking, so the script continues.
 eel.start("frontend/index.html", mode=None, block=False, port=port)
+
+# Bugfix: Launch the Electron front-end SECOND, after the server is running.
+# It will now be able to connect to the port that Eel has opened.
+subprocess.Popen([electron_path, ".", str(port), "--trace-warnings"]) 
 
 
 workthreads.start_threads()
