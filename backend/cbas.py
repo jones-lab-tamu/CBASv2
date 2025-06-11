@@ -50,7 +50,7 @@ def encode_file(encoder: nn.Module, path: str) -> str:
     for i in range(0, len(frames), batch_size):
         batch = frames[i : i + batch_size]
 
-        with torch.no_grad() and torch.amp.autocast(encoder.device):
+        with torch.no_grad() and torch.amp.autocast(device_type=encoder.device.type):
             out = encoder(batch.unsqueeze(1).to(encoder.device))
 
         out = out.squeeze(1).to("cpu")
