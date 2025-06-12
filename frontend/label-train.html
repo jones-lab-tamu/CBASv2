@@ -247,8 +247,12 @@
             <!-- Current video path is injected here -->
           </div>
           <div class="col-md-3 text-end">
-            <button id="save-labels-btn" class="btn btn-success" onclick="saveCorrections()">
+            <button id="save-labels-btn" class="btn btn-success" onclick="handleCommitClick()">
 			  <i class="bi bi-save-fill me-2"></i>Commit Corrections
+			</button>
+			<!-- The cancel button also calls its function directly -->
+			<button id="cancel-commit-btn" class="btn btn-secondary ms-2" onclick="eel.cancel_commit_stage()()" style="display: none;">
+			  Cancel
 			</button>
           </div>
         </div>

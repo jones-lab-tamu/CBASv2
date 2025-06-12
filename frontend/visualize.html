@@ -111,14 +111,18 @@
 					</div>
                     
                     <!-- Actogram Image Display -->
-                    <div class="text-center mt-3">
+					<div class="text-center mt-3">
 					  <div id="loading-spinner-actogram" class="spinner-border text-light" role="status" style="display: none;">
 						<span class="visually-hidden">Loading...</span>
 					  </div>
-					  <!-- THIS IS THE NEW CONTAINER -->
+					  
+					  <!-- Single master container -->
 					  <div id="actogram-container" class="row g-3 justify-content-center">
-						<!-- Actograms will be dynamically inserted here by JS -->
-						<img id="actogram-placeholder" src="assets/noData.png" alt="Actogram will be displayed here" style="display: block; max-width: 100%; border: 1px solid #444;">
+						<!-- The initial state IS the placeholder. JS will replace this. -->
+						<div id="actogram-placeholder" class="d-flex align-items-center justify-content-center text-muted"
+							 style="border: 1px dashed #6c757d; border-radius: .375rem; height: 300px; background-color: #212529;">
+						  <p class="mb-0 text-light">Select a behavior to generate an actogram.</p>
+						</div>
 					  </div>
 					</div>
                   </div>

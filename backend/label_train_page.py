@@ -190,6 +190,8 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
         gui_state.label_history, gui_state.label_behavior_colors = [], []
         gui_state.label_session_buffer, gui_state.selected_instance_index = [], -1
         gui_state.label_probability_df = probability_df
+        # Ensure confirmation mode is always turned off when starting a new session.
+        gui_state.label_confirmation_mode = False
         
         # 3. Set Up Dataset and Colormap
         dataset: cbas.Dataset = gui_state.proj.datasets[name]
@@ -227,6 +229,7 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
         print("Setup complete. Calling frontend to build UI.")
         eel.buildLabelingUI(dataset_behaviors, behavior_colors)()
         eel.setLabelingModeUI(labeling_mode, model_name_for_ui)()
+        eel.setConfirmationModeUI(False)()
 
         # 7. Load Video and Push Initial Frame
         if not gui_state.label_videos: raise ValueError("Video list is empty after setup.")
@@ -300,7 +303,9 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
 
 @eel.expose
 def save_session_labels():
-    """Filters for only human-verified/confirmed instances and saves them."""
+    """
+    Filters for only human-verified/confirmed instances and saves them.
+    """
     if not gui_state.label_dataset or not gui_state.label_videos: return
 
     final_labels_to_save = []
@@ -316,11 +321,13 @@ def save_session_labels():
     current_video_path = gui_state.label_videos[0]
     all_labels = gui_state.label_dataset.labels["labels"]
 
+    # Remove all old labels for the current video
     for behavior_name in all_labels:
         all_labels[behavior_name][:] = [
             inst for inst in all_labels[behavior_name] if inst.get("video") != current_video_path
         ]
     
+    # Add the new, verified-only labels back
     for corrected_inst in final_labels_to_save:
         all_labels.setdefault(corrected_inst['label'], []).append(corrected_inst)
     
@@ -329,9 +336,12 @@ def save_session_labels():
     
     print(f"Saved {len(final_labels_to_save)} human-verified/corrected labels for video {os.path.basename(current_video_path)}.")
     
-    # Reset for the next session
-    gui_state.label_corrected_indices = []
-    gui_state.label_instance_draft = {}
+    # Reset the confirmation mode after saving
+    gui_state.label_confirmation_mode = False
+    # Tell the UI to reset the buttons
+    eel.setConfirmationModeUI(False)()
+    # Trigger a final re-render to show the clean state
+    render_image()
 
 
 # =================================================================
@@ -365,7 +375,6 @@ def confirm_selected_instance():
         else:
             # --- LOCK/CONFIRM LOGIC ---
             # It's not confirmed, so confirm it.
-            # This "bakes in" any edits made with []
             instance['_confirmed'] = True
             print(f"Confirmed instance {gui_state.selected_instance_index}.")
             
@@ -386,7 +395,7 @@ def handle_click_on_label_image(x: int, y: int):
 def next_video(shift: int):
     """Loads the next or previous video in the labeling session's video list."""
     if not gui_state.label_videos:
-        eel.updateLabelImageSrc(None, None); eel.updateFileInfo("No videos available."); return
+        eel.updateLabelImageSrc(None, None, None); eel.updateFileInfo("No videos available."); return
 
     gui_state.label_start, gui_state.label_type = -1, -1
     gui_state.label_vid_index = (gui_state.label_vid_index + shift) % len(gui_state.label_videos)
@@ -399,7 +408,7 @@ def next_video(shift: int):
     capture = cv2.VideoCapture(current_video_path)
 
     if not capture.isOpened():
-        eel.updateLabelImageSrc(None, None); eel.updateFileInfo(f"Error loading video."); gui_state.label_capture = None; return
+        eel.updateLabelImageSrc(None, None, None); eel.updateFileInfo(f"Error loading video."); gui_state.label_capture = None; return
 
     gui_state.label_capture = capture
     gui_state.label_index = 0
@@ -438,10 +447,7 @@ def next_frame(shift: int):
 
 @eel.expose
 def jump_to_instance(direction: int):
-    """Finds the next/previous instance and jumps the playhead to its start frame."""
-    # Clear any previous draft when jumping to a new instance
-    gui_state.label_instance_draft = {}
-
+    """Finds the next/previous instance and jumps the playhead. Clears any active draft."""
     if not gui_state.label_session_buffer:
         eel.highlightBehaviorRow(None)()
         eel.updateConfidenceBadge(None, None)() # Clear badge if no instances
@@ -468,15 +474,14 @@ def jump_to_instance(direction: int):
         gui_state.label_index = instance_data['start']
         gui_state.selected_instance_index = original_index
         
-        # Call the new JS function to display the confidence badge
-        confidence = instance_data.get('confidence') # Will be None for human-added labels
+        confidence = instance_data.get('confidence')
         eel.updateConfidenceBadge(instance_data['label'], confidence)()
 
         eel.highlightBehaviorRow(instance_data['label'])()
         render_image()
     else:
         eel.highlightBehaviorRow(None)()
-        eel.updateConfidenceBadge(None, None)() # Clear badge if no target found
+        eel.updateConfidenceBadge(None, None)()
 
 
 @eel.expose
@@ -502,6 +507,7 @@ def update_instance_boundary(boundary_type: str):
         
         render_image()
 
+
 @eel.expose
 def get_zoom_range_for_click(x_pos: int) -> int:
     """Calculates a new frame index based on a click on the zoom bar."""
@@ -509,10 +515,14 @@ def get_zoom_range_for_click(x_pos: int) -> int:
         instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
         total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
 
-        inst_len = instance['end'] - instance['start']
+        # Use original boundaries for context if they exist, otherwise current ones.
+        original_start = instance.get('_original_start', instance['start'])
+        original_end = instance.get('_original_end', instance['end'])
+        
+        inst_len = original_end - original_start
         context = inst_len * 2
-        zoom_start = max(0, instance['start'] - context)
-        zoom_end = min(total_frames, instance['end'] + context)
+        zoom_start = max(0, original_start - context)
+        zoom_end = min(total_frames, original_end + context)
         
         if zoom_end > zoom_start:
             # Calculate what frame corresponds to the click position (x_pos out of 500)
@@ -612,6 +622,19 @@ def pop_instance_from_buffer():
     except ValueError:
         print(f"Could not pop {last_added}, not found in buffer.")
 
+@eel.expose
+def stage_for_commit():
+    """Enters confirmation mode and triggers a re-render showing only staged labels."""
+    gui_state.label_confirmation_mode = True
+    eel.setConfirmationModeUI(True)
+    render_image()
+
+@eel.expose
+def cancel_commit_stage():
+    """Exits confirmation mode and triggers a re-render of the normal view."""
+    gui_state.label_confirmation_mode = False
+    eel.setConfirmationModeUI(False)
+    render_image()
 
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: DATASET & MODEL MANAGEMENT
@@ -712,7 +735,7 @@ def render_image():
     _, encoded_timeline = cv2.imencode(".jpg", timeline_canvas_with_overlays)
     timeline_blob = base64.b64encode(encoded_timeline.tobytes()).decode("utf-8")
 
-    # --- 3. Generate Zoom Timeline Blob (ALWAYS) ---
+    # 3. Generate Zoom Timeline Blob (ALWAYS)
     zoom_canvas = np.full((50, 500, 3), 100, dtype=np.uint8)
     if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
         instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
@@ -767,6 +790,13 @@ def fill_colors(canvas_img: np.ndarray, total_frames: int) -> np.ndarray:
     timeline_y, timeline_h, timeline_w = 0, canvas_img.shape[0], canvas_img.shape[1]
 
     for i, inst in enumerate(gui_state.label_session_buffer):
+        is_human_added = 'confidence' not in inst
+        is_confirmed = inst.get('_confirmed', False)
+        
+        # If in confirmation mode, ONLY draw labels that will be saved.
+        if gui_state.label_confirmation_mode and not (is_human_added or is_confirmed):
+            continue # Skip this instance, as it won't be saved
+
         try:
             b_idx = behaviors.index(inst['label'])
             color_hex = gui_state.label_behavior_colors[b_idx].lstrip("#")
@@ -779,19 +809,19 @@ def fill_colors(canvas_img: np.ndarray, total_frames: int) -> np.ndarray:
                 confidence = inst.get('confidence', 1.0)
                 overlay = canvas_img.copy()
                 cv2.rectangle(overlay, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
-                cv2.addWeighted(overlay, confidence, canvas_img, 1 - confidence, 0, canvas_img)
+                # Blend the overlay with the original canvas based on confidence
+                # In confirmation mode, everything is solid
+                alpha = 1.0 if gui_state.label_confirmation_mode else confidence
+                cv2.addWeighted(overlay, alpha, canvas_img, 1 - alpha, 0, canvas_img)
                 
-                # --- CORRECTED LOGIC ---
-                # Check the instance's own '_confirmed' flag.
-                is_confirmed = 'confidence' not in inst or inst.get('_confirmed', False)
-                
+                # Use the 'is_confirmed' flag for the border
                 border_color = (255, 255, 255) if is_confirmed else bgr_color
                 border_thickness = 2 if is_confirmed else 1
                 cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), border_color, border_thickness)
 
                 if i == gui_state.selected_instance_index:
+                    # Keep the selection highlight distinct
                     cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), (0, 255, 255), 2) # Cyan highlight
-                # --- END OF CORRECTION ---
 
         except (ValueError, IndexError):
             continue

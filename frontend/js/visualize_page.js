@@ -41,21 +41,18 @@ function toggleVisibility(elementId) {
 
 function showActogramLoadingIndicator() {
     const spinner = document.getElementById('loading-spinner-actogram');
-    if (spinner) spinner.style.display = "block";
     const container = document.getElementById('actogram-container');
-    if(container) container.innerHTML = ''; // Clear old actograms
-    const placeholder = document.getElementById('actogram-placeholder');
-    if (placeholder) placeholder.style.display = 'none';
+    
+    if (spinner) spinner.style.display = "block";
+    // The only action needed is to clear the container.
+    if (container) container.innerHTML = ''; 
 }
-
-
 // =================================================================
 // EEL-EXPOSED FUNCTIONS (Called FROM Python)
 // =================================================================
 
 eel.expose(updateActogramDisplay);
 function updateActogramDisplay(results, taskId) {
-    // *** CRITICAL CHECK ***: Only update the UI if the returned data is from the most recent request.
     if (taskId !== latestVizTaskId) {
         console.log(`Ignoring obsolete UI update for task ${taskId}. Current task is ${latestVizTaskId}.`);
         return;
@@ -63,16 +60,14 @@ function updateActogramDisplay(results, taskId) {
 
     const container = document.getElementById('actogram-container');
     const spinner = document.getElementById('loading-spinner-actogram');
-    const placeholder = document.getElementById('actogram-placeholder');
 
     if (spinner) spinner.style.display = "none";
     if (!container) return;
 
-    container.innerHTML = '';
     if (results && results.length > 0) {
-        if (placeholder) placeholder.style.display = 'none';
+        // We have results, so build the actogram cards.
         let html = '';
-        const colClass = results.length === 1 ? 'col-12' : 'col-xl-6'; // Full width if one, half if more
+        const colClass = results.length === 1 ? 'col-12' : 'col-xl-6';
 
         results.forEach(result => {
             html += `
@@ -90,10 +85,13 @@ function updateActogramDisplay(results, taskId) {
         });
         container.innerHTML = html;
     } else {
-        if (placeholder) {
-            placeholder.src = "assets/noData.png";
-            placeholder.style.display = 'block';
-        }
+        // No results, so put the placeholder HTML back into the container.
+        container.innerHTML = `
+            <div id="actogram-placeholder" class="d-flex align-items-center justify-content-center text-muted"
+                 style="border: 1px dashed #6c757d; border-radius: .375rem; height: 300px; background-color: #212529;">
+              <p class="mb-0 text-light">Select a behavior to generate an actogram.</p>
+            </div>
+        `;
     }
 }
 

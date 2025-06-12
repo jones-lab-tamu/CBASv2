@@ -59,7 +59,6 @@ function getTextColorForBg(hexColor) {
     return luminance > 0.5 ? '#000000' : '#FFFFFF';
 }
 
-
 // =================================================================
 // EEL-EXPOSED FUNCTIONS (Called FROM Python)
 // =================================================================
@@ -312,19 +311,45 @@ function updateConfidenceBadge(behaviorName, confidence) {
     }
 }
 
+// Eel-exposed function to just handle VISUALS
+eel.expose(setConfirmationModeUI);
+function setConfirmationModeUI(isConfirming) {
+    const commitBtn = document.getElementById('save-labels-btn');
+    const cancelBtn = document.getElementById('cancel-commit-btn');
+    
+    if (!commitBtn || !cancelBtn) return;
+
+    if (isConfirming) {
+        commitBtn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Confirm & Save';
+        commitBtn.classList.remove('btn-success');
+        commitBtn.classList.add('btn-primary');
+        cancelBtn.style.display = 'inline-block';
+    } else {
+        commitBtn.innerHTML = '<i class="bi bi-save-fill me-2"></i>Commit Corrections';
+        commitBtn.classList.remove('btn-primary');
+        commitBtn.classList.add('btn-success');
+        cancelBtn.style.display = 'none';
+    }
+}
 
 // =================================================================
 // UI INTERACTION & EVENT HANDLERS (Called FROM HTML)
 // =================================================================
 
-/** Saves all corrections for the current video session to file. */
-function saveCorrections() {
-    if (confirm("Are you sure you want to finalize and save all labels for this video? This will overwrite any previous labels for this file.")) {
-        eel.save_session_labels()();
-        alert("Labels for this video have been saved!");
+// State machine function called by the main button
+function handleCommitClick() {
+    const commitBtn = document.getElementById('save-labels-btn');
+    // Check the button's current text to determine the state
+    if (commitBtn.innerText.includes("Commit Corrections")) {
+        // If it's in the initial state, call the staging function
+        eel.stage_for_commit()();
+    } else {
+        // Otherwise, it's in confirmation mode, so show the dialog and save
+        if (confirm("Are you sure you want to commit these verified labels? This will overwrite previous labels for this video file.")) {
+            eel.save_session_labels()();
+        }
     }
 }
-
 /** Jumps to the next or previous labeled instance in the video. */
 function jumpToInstance(direction) {
     eel.jump_to_instance(direction)();

@@ -72,6 +72,9 @@ selected_instance_index: int = -1
 label_behavior_colors: List[str] = []
 """The pre-vetted, high-contrast list of hex color strings for the current set of behaviors."""
 
+label_confirmation_mode: bool = False
+"""A flag to indicate if the user is in the final 'commit' confirmation view."""
+
 # Use a type hint for the colormap object if possible, otherwise fallback to Any.
 if TYPE_CHECKING:
     label_col_map: Union[Colormap, None] = None
