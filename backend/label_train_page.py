@@ -391,6 +391,24 @@ def refilter_instances(new_threshold: int):
 # =================================================================
 
 @eel.expose
+def jump_to_frame(frame_number: int):
+    """Jumps the video playhead to a specific frame number."""
+    if not (gui_state.label_capture and gui_state.label_capture.isOpened()):
+        return
+    
+    try:
+        frame_num = int(frame_number)
+        total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        
+        # Clamp the value to be within the valid frame range
+        safe_frame_num = max(0, min(frame_num, int(total_frames) - 1))
+        
+        gui_state.label_index = safe_frame_num
+        render_image()
+    except (ValueError, TypeError):
+        print(f"Invalid frame number received: {frame_number}")
+
+@eel.expose
 def confirm_selected_instance():
     """
     Toggles the 'confirmed' state of the currently selected instance.

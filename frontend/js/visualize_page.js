@@ -26,13 +26,6 @@ function routeToRecordPage() { routingInProgress = true; window.location.href = 
 function routeToLabelTrainPage() { routingInProgress = true; window.location.href = './label-train.html'; }
 function routeToVisualizePage() { routingInProgress = true; window.location.href = './visualize.html'; }
 
-function showErrorOnVisualizePage(message) {
-    const errorMessageElement = document.getElementById("error-message");
-    if (errorMessageElement && generalErrorBsModal) {
-        errorMessageElement.innerText = message;
-        generalErrorBsModal.show();
-    } else { alert(message); }
-}
 
 function toggleVisibility(elementId) {
     const elem = document.getElementById(elementId);
@@ -50,6 +43,15 @@ function showActogramLoadingIndicator() {
 // =================================================================
 // EEL-EXPOSED FUNCTIONS (Called FROM Python)
 // =================================================================
+
+eel.expose(showErrorOnVisualizePage);
+function showErrorOnVisualizePage(message) {
+    const errorMessageElement = document.getElementById("error-message");
+    if (errorMessageElement && generalErrorBsModal) {
+        errorMessageElement.innerText = message;
+        generalErrorBsModal.show();
+    } else { alert(message); }
+}
 
 eel.expose(updateActogramDisplay);
 function updateActogramDisplay(results, taskId) {
@@ -95,6 +97,30 @@ function updateActogramDisplay(results, taskId) {
     }
 }
 
+eel.expose(save_data_to_file);
+async function save_data_to_file(csvData, defaultFilename) {
+    if (window.electronAPI && window.electronAPI.invoke) {
+        try {
+            // 1. Ask the user where to save the file
+            const filePath = await window.electronAPI.invoke('show-save-dialog', {
+                title: 'Save Actogram Data',
+                defaultPath: defaultFilename,
+                filters: [{ name: 'CSV Files', extensions: ['csv'] }]
+            });
+
+            // 2. If they chose a path, send the data and path to be written to disk
+            if (filePath) {
+                window.electronAPI.send('save-file-to-disk', filePath, csvData);
+            } else {
+                console.log("User cancelled the save dialog.");
+            }
+        } catch (err) {
+            console.error("Save process error:", err);
+            showErrorOnVisualizePage("Could not save the file.");
+        }
+    }
+}
+
 // =================================================================
 // CORE APPLICATION LOGIC
 // =================================================================
@@ -103,6 +129,9 @@ function updateActogramDisplay(results, taskId) {
  * Gathers all checked behaviors and parameters, then calls the backend to generate actograms.
  */
 async function generateAndDisplayActograms() {
+    // Get a handle to the export button
+    const exportBtn = document.getElementById('export-data-btn');
+
     const checkedBehaviors = Array.from(document.querySelectorAll('.behavior-checkbox:checked'));
     
     latestVizTaskId++; // Increment to create a new, unique ID for this task.
@@ -111,6 +140,7 @@ async function generateAndDisplayActograms() {
     if (checkedBehaviors.length === 0) {
         updateActogramDisplay([], currentTaskId);
         document.getElementById('actogram-title').textContent = 'Actogram';
+        if (exportBtn) exportBtn.disabled = true; // Disable button if nothing is selected
         return;
     }
 
@@ -132,6 +162,9 @@ async function generateAndDisplayActograms() {
     document.getElementById('actogram-title').textContent = `Actogram: ${modelName} (Recording: ${sessionDir})`;
     showActogramLoadingIndicator();
 
+    // Enable the export button right before we make the request
+    if (exportBtn) exportBtn.disabled = false;
+
     try {
         await eel.generate_actograms(
             rootDir, sessionDir, modelName, behaviorNames,
@@ -142,6 +175,7 @@ async function generateAndDisplayActograms() {
         console.error("Error calling eel.generate_actograms:", error);
         updateActogramDisplay([], currentTaskId);
         showErrorOnVisualizePage(`Failed to generate actogram(s): ${error.message || error}`);
+        if (exportBtn) exportBtn.disabled = true; // Disable button on error
     }
 }
 
@@ -226,6 +260,45 @@ async function initializeVisualizePageContent() {
     }
 }
 
+async function exportActogramData() {
+    const checkedBehaviors = Array.from(document.querySelectorAll('.behavior-checkbox:checked'));
+    if (checkedBehaviors.length === 0) {
+        showErrorOnVisualizePage("Please select at least one behavior to export.");
+        return;
+    }
+
+    try {
+        // Step 1: Ask the user to select a FOLDER.
+        const folderPath = await window.electronAPI.invoke('show-folder-dialog');
+
+        // Step 2: If the user chose a folder, then call the backend.
+        if (folderPath) {
+            console.log("Folder path chosen, now calling Python to generate and save data.");
+            
+            const firstCheckbox = checkedBehaviors[0];
+            const rootDir = firstCheckbox.dataset.root;
+            const sessionDir = firstCheckbox.dataset.session;
+            const modelName = firstCheckbox.dataset.model;
+            const behaviorNames = checkedBehaviors.map(cb => cb.dataset.behavior);
+    
+            const framerate = document.getElementById('vs-framerate').value;
+            const binsize = document.getElementById('vs-binsize').value;
+            const start = document.getElementById('vs-start').value;
+            const threshold = document.getElementById('vs-threshold').value;
+
+            // Call the backend with the chosen FOLDER path
+            eel.generate_and_save_data(
+                folderPath, rootDir, sessionDir, modelName, behaviorNames,
+                framerate, binsize, start, threshold
+            )();
+        } else {
+            console.log("User cancelled the folder selection dialog.");
+        }
+    } catch (err) {
+        console.error("Folder selection error:", err);
+        showErrorOnVisualizePage("Could not open the folder selection dialog.");
+    }
+}
 
 // =================================================================
 // PAGE INITIALIZATION & EVENT LISTENERS

@@ -90,7 +90,7 @@
 						<input type="number" class="form-control form-control-sm" id="vs-threshold" value="50" step="1" min="1" max="100">
 					  </div>
 
-					  <!-- New Light Cycle Dropdown -->
+					  <!-- Light Cycle Dropdown -->
 					  <div class="col-lg-6 col-xl-3 d-flex align-items-center mt-2">
 						 <label for="vs-lcycle" class="form-label me-2 mb-0 text-nowrap">Light Cycle:</label>
 						 <select class="form-select form-select-sm" id="vs-lcycle">
@@ -107,7 +107,14 @@
 						  </label>
 						</div>
 					  </div>			  
-					  					  
+					
+                      <!-- EXPORT BUTTON -->
+                      <div class="col-12 d-flex justify-content-end mt-3">
+                        <button id="export-data-btn" class="btn btn-sm btn-outline-info" onclick="exportActogramData()" disabled>
+                          <i class="bi bi-download me-1"></i> Export Binned Data
+                        </button>
+                      </div>
+					
 					</div>
                     
                     <!-- Actogram Image Display -->

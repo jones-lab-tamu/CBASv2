@@ -99,7 +99,26 @@ if (!gotTheLock) {
           if (!result.canceled) event.sender.send('selected-directory', result.filePaths[0]);
         });
     });
-    
+	
+	ipcMain.on('save-file-to-disk', (event, filePath, data) => {
+		try {
+			fs.writeFileSync(filePath, data);
+		} catch (err) {
+			console.error("Failed to save file:", err);
+			dialog.showErrorBox("Save Error", "Could not save the file to the selected location.");
+		}
+	});
+	
+	// This handler is specifically for choosing the EXPORT folder
+	ipcMain.handle('show-folder-dialog', async (event, options) => {
+	  const { filePaths } = await dialog.showOpenDialog(appWindow, {
+		properties: ['openDirectory'],
+		title: 'Select Folder to Save Exported CSVs'
+	  });
+	  // Return the first selected path, or null if cancelled
+	  return filePaths && filePaths.length > 0 ? filePaths[0] : null;
+	});
+
     appWindow.on('closed', () => { appWindow = null; });
   }
 

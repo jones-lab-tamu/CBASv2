@@ -24,6 +24,7 @@ import subprocess
 from datetime import datetime
 import random
 import yaml
+import re
 
 # Third-party imports
 import cv2
@@ -511,33 +512,40 @@ class Actogram:
         self.plot_acrophase = plot_acrophase
         self.lightcycle_str = {"LL": "1"*24, "DD": "0"*24}.get(lightcycle, "1"*12 + "0"*12)
         self.blob = None # Initialize blob as None
+        self.binned_activity = [] # <-- ADD THIS LINE
 
         if self.framerate <= 0 or self.bin_size_minutes <= 0: return
         self.binsize_frames = int(self.bin_size_minutes * self.framerate * 60)
         if self.binsize_frames <= 0: return
 
-        # Calculate raw activity
+        # --- Correct data loading logic from before ---
         activity_per_frame = []
-        valid_csvs = [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith(f"_{model}_outputs.csv")]
-        if not valid_csvs: return
+        all_csvs_for_model = [os.path.join(self.directory, f) for f in os.listdir(self.directory) if f.endswith(f"_{self.model}_outputs.csv")]
+        if not all_csvs_for_model: return
         
-        valid_csvs.sort(key=lambda p: int(os.path.basename(p).split('_')[-3]) if os.path.basename(p).split('_')[-3].isdigit() else -1)
-        
-        for file_path in valid_csvs:
+        try:
+            all_csvs_for_model.sort(key=lambda p: int(re.search(r'_(\d+)_' + self.model, os.path.basename(p)).group(1)))
+        except (AttributeError, ValueError):
+            all_csvs_for_model.sort()
+
+        for file_path in all_csvs_for_model:
             df = pd.read_csv(file_path)
             if df.empty or self.behavior not in df.columns: continue
             probs = df[self.behavior].to_numpy()
-            is_max = (df[df.columns.drop(self.behavior)].max(axis=1) < probs).to_numpy() # More robust is_max
+            is_max = (df[df.columns.drop(self.behavior)].max(axis=1) < probs).to_numpy()
             activity_per_frame.extend((probs * is_max >= self.threshold).astype(float).tolist())
         
         if not activity_per_frame: return
 
-        # Bin activity data
-        binned_activity = [np.sum(activity_per_frame[i:i + self.binsize_frames]) for i in range(0, len(activity_per_frame), self.binsize_frames)]
-        if not binned_activity: return
+        # Bin the complete, concatenated activity data
+        binned_activity_result = [np.sum(activity_per_frame[i:i + self.binsize_frames]) for i in range(0, len(activity_per_frame), self.binsize_frames)]
+        
+        self.binned_activity = binned_activity_result
+
+        if not self.binned_activity: return
 
         # Plot and encode
-        fig = _create_matplotlib_actogram(binned_activity, [c=="1" for c in self.lightcycle_str], 24.0, self.bin_size_minutes, f"{model} - {behavior}", self.start_hour_on_plot, self.plot_acrophase, base_color)
+        fig = _create_matplotlib_actogram(self.binned_activity, [c=="1" for c in self.lightcycle_str], 24.0, self.bin_size_minutes, f"{model} - {behavior}", self.start_hour_on_plot, self.plot_acrophase, base_color)
         if fig:
             buf = io.BytesIO()
             fig.savefig(buf, format='png', bbox_inches='tight', facecolor='#343a40')

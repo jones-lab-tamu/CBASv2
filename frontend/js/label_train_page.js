@@ -215,6 +215,8 @@ function buildLabelingUI(behaviors, colors) {
 	
 }
 
+// In frontend/js/label_train_page.js
+
 /** Sets the UI mode for labeling (scratch vs. review) and updates controls text. */
 eel.expose(setLabelingModeUI);
 function setLabelingModeUI(mode, modelName = '') {
@@ -223,20 +225,52 @@ function setLabelingModeUI(mode, modelName = '') {
     if (!controlsHeader || !cheatSheet) return;
 
     if (mode === 'review') {
+        // --- CONFIGURE FOR REVIEW MODE ---
         controlsHeader.classList.remove('bg-dark');
         controlsHeader.classList.add('bg-success');
         controlsHeader.querySelector('h5').innerHTML = `Reviewing: <span class="badge bg-light text-dark">${modelName}</span>`;
         
-        // We can now just use the existing cheat sheet div for the content
-        const reviewControlsCard = cheatSheet.querySelector('.card');
-        if(reviewControlsCard) reviewControlsCard.style.display = 'block';
+        // This is the updated cheat sheet for Review Mode
+        cheatSheet.innerHTML = `
+            <div class="card bg-dark">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0 text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5>
+                <div id="confidence-filter-container" class="d-flex align-items-center w-50">
+                  <label for="confidence-slider" class="form-label me-3 mb-0 text-nowrap text-light">Filter Confidence < </label>
+                  <input type="range" class="form-range" min="0" max="100" step="1" value="100" id="confidence-slider">
+                  <span id="slider-value-display" class="ms-3 badge bg-info" style="width: 55px;">100%</span>
+                  <button id="reset-slider-btn" class="btn btn-sm btn-outline-secondary ms-2">Reset</button>
+                </div>
+              </div>
+              <div class="card-body" style="font-size: 0.9rem;">
+                <div class="row">
+                  <div class="col-md-6">
+                    <ul class="list-unstyled">
+                      <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
+                      <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame (within instance)</li>
+                      <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
+                      <li><kbd>Enter</kbd> : Confirm / Lock / Unlock Instance</li>
+                    </ul>
+                  </div>
+                  <div class="col-md-6">
+                    <ul class="list-unstyled">
+                      <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
+                      <li><kbd>Delete</kbd> : Delete instance at current frame</li>
+                      <li><kbd>Backspace</kbd> : Undo last added label</li>
+                      <li><kbd>Ctrl</kbd> + <kbd>S</kbd> : Commit Corrections</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>`;
 
     } else { // 'scratch' mode
+        // --- CONFIGURE FOR SCRATCH MODE ---
         controlsHeader.classList.remove('bg-success');
         controlsHeader.classList.add('bg-dark');
         controlsHeader.querySelector('h5').innerHTML = `Behaviors (Click to label)`;
         
-        // We build the scratch cheat sheet dynamically or have a separate div for it
+        // This is the updated cheat sheet for Scratch Mode
         cheatSheet.innerHTML = `
             <div class="card bg-dark">
               <div class="card-header"><h5>Labeling Controls</h5></div>
@@ -247,6 +281,7 @@ function setLabelingModeUI(mode, modelName = '') {
                       <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame</li>
                       <li><kbd>↑</kbd> / <kbd>↓</kbd> : Double / Halve scrub speed</li>
                       <li><kbd>Click Timeline</kbd> : Jump to frame</li>
+                      <li><kbd>Ctrl</kbd> + <kbd>S</kbd> : Commit Corrections</li>
                     </ul>
                   </div>
                   <div class="col-md-6">
@@ -261,11 +296,40 @@ function setLabelingModeUI(mode, modelName = '') {
               </div>
             </div>`;
     }
-    
-    // Targeting the container within the cheat sheet's header
-    const filterContainer = document.getElementById('confidence-filter-container');
-    if (filterContainer) {
-        filterContainer.style.display = (mode === 'review') ? 'flex' : 'none';
+
+    // After rebuilding the HTML, we must re-attach the event listener for the slider
+    const confidenceSlider = document.getElementById('confidence-slider');
+    const sliderValueDisplay = document.getElementById('slider-value-display');
+    const resetSliderBtn = document.getElementById('reset-slider-btn');
+    const timelineContainer = document.getElementById('full-timeline-section');
+
+    if (confidenceSlider && sliderValueDisplay) {
+        confidenceSlider.addEventListener('input', function() {
+            sliderValueDisplay.textContent = `${this.value}%`;
+            if (timelineContainer) {
+                if (parseInt(this.value) < 100) {
+                    timelineContainer.classList.add('timeline-filtered');
+                } else {
+                    timelineContainer.classList.remove('timeline-filtered');
+                }
+            }
+            clearTimeout(confidenceFilterDebounceTimer);
+            confidenceFilterDebounceTimer = setTimeout(() => {
+                eel.refilter_instances(parseInt(this.value))();
+            }, 400);
+        });
+    }
+    if (resetSliderBtn) {
+        resetSliderBtn.addEventListener('click', function() {
+            if (confidenceSlider && sliderValueDisplay) {
+                confidenceSlider.value = 100;
+                sliderValueDisplay.textContent = '100%';
+                if (timelineContainer) {
+                    timelineContainer.classList.remove('timeline-filtered');
+                }
+                eel.refilter_instances(100)();
+            }
+        });
     }
 }
 
@@ -336,6 +400,15 @@ function setConfirmationModeUI(isConfirming) {
 // UI INTERACTION & EVENT HANDLERS (Called FROM HTML)
 // =================================================================
 
+function jumpToFrame() {
+    const input = document.getElementById('frame-jump-input');
+    if (input && input.value) {
+        const frameNum = parseInt(input.value);
+        if (!isNaN(frameNum)) {
+            eel.jump_to_frame(frameNum)();
+        }
+    }
+}
 // State machine function called by the main button
 function handleCommitClick() {
     const commitBtn = document.getElementById('save-labels-btn');
@@ -755,49 +828,75 @@ if (zoomBarImageElement) {
 
 /** Global keydown listener for all labeling shortcuts. */
 window.addEventListener("keydown", (event) => {
-    if (labelingInterfaceActive && document.getElementById('label')?.style.display === 'flex') {
-        let handled = true;
-        if (event.key === "Tab") {
-            event.preventDefault();
-            jumpToInstance(event.shiftKey ? -1 : 1);
-            return;
+    // Ignore key presses if a modal is open or if the labeling UI isn't active
+    if (document.querySelector('.modal.show') || !labelingInterfaceActive || document.getElementById('label')?.style.display !== 'flex') {
+        return;
+    }
+
+    // --- SAVE HOTKEY ---
+    if (event.ctrlKey && event.key.toLowerCase() === 's') {
+        event.preventDefault(); // Prevent the browser's default "Save Page" dialog
+        const commitBtn = document.getElementById('save-labels-btn');
+        if (commitBtn) {
+            commitBtn.click(); // Programmatically click the main commit/save button
         }
-        switch (event.key) {
-            case "ArrowLeft":
-                (event.ctrlKey || event.metaKey) ? eel.next_video(-1)() : eel.next_frame(-scrubSpeedMultiplier)();
-                break;
-            case "ArrowRight":
-                (event.ctrlKey || event.metaKey) ? eel.next_video(1)() : eel.next_frame(scrubSpeedMultiplier)();
-                break;
-            case "ArrowUp":
-                scrubSpeedMultiplier = Math.min(scrubSpeedMultiplier * 2, 128);
-                break;
-            case "ArrowDown":
-                scrubSpeedMultiplier = Math.max(1, Math.trunc(scrubSpeedMultiplier / 2));
-                break;
-            case "Delete":
-                eel.delete_instance_from_buffer()();
-                break;
-            case "Backspace":
-                eel.pop_instance_from_buffer()();
-                break;
-            case "[":
-                eel.update_instance_boundary('start')();
-                break;
-            case "]":
-                eel.update_instance_boundary('end')();
-                break;
-			case "Enter":
-				eel.confirm_selected_instance()();
-				break;
-            default:
-                let bIdx = -1;
-                if (event.keyCode >= 49 && event.keyCode <= 57) bIdx = event.keyCode - 49;
-                else if (event.keyCode >= 65 && event.keyCode <= 90) bIdx = event.keyCode - 65 + 9;
-                if (bIdx !== -1) { eel.label_frame(bIdx)(); } else { handled = false; }
-                break;
+        return; // Stop further processing for this event
+    }
+
+    // Ignore other key presses if the user is typing in the jump-to-frame input
+    if (document.activeElement === document.getElementById('frame-jump-input')) {
+        // Allow 'Enter' to trigger the jump
+        if (event.key === 'Enter') {
+            jumpToFrame();
         }
-        if (handled) event.preventDefault();
+        return;
+    }
+    
+    let handled = true;
+    if (event.key === "Tab") {
+        event.preventDefault();
+        jumpToInstance(event.shiftKey ? -1 : 1);
+        return;
+    }
+
+    switch (event.key) {
+        case "ArrowLeft":
+            (event.ctrlKey || event.metaKey) ? eel.next_video(-1)() : eel.next_frame(-scrubSpeedMultiplier)();
+            break;
+        case "ArrowRight":
+            (event.ctrlKey || event.metaKey) ? eel.next_video(1)() : eel.next_frame(scrubSpeedMultiplier)();
+            break;
+        case "ArrowUp":
+            scrubSpeedMultiplier = Math.min(scrubSpeedMultiplier * 2, 128);
+            break;
+        case "ArrowDown":
+            scrubSpeedMultiplier = Math.max(1, Math.trunc(scrubSpeedMultiplier / 2));
+            break;
+        case "Delete":
+            eel.delete_instance_from_buffer()();
+            break;
+        case "Backspace":
+            eel.pop_instance_from_buffer()();
+            break;
+        case "[":
+            eel.update_instance_boundary('start')();
+            break;
+        case "]":
+            eel.update_instance_boundary('end')();
+            break;
+        case "Enter":
+            eel.confirm_selected_instance()();
+            break;
+        default:
+            let bIdx = -1;
+            if (event.keyCode >= 49 && event.keyCode <= 57) bIdx = event.keyCode - 49;
+            else if (event.keyCode >= 65 && event.keyCode <= 90) bIdx = event.keyCode - 65 + 9;
+            if (bIdx !== -1) { eel.label_frame(bIdx)(); } else { handled = false; }
+            break;
+    }
+
+    if (handled) {
+        event.preventDefault();
     }
 });
 

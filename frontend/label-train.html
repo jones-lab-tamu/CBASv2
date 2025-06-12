@@ -283,7 +283,14 @@
 					</div>
 				</div>
 
-				<!-- Section 4: Navigation Controls -->
+				<!-- Section 4: Jump to Frame Input -->
+				<div id="jump-to-frame-controls" class="d-flex align-items-center justify-content-center mt-2">
+				  <label for="frame-jump-input" class="form-label text-light me-2 mb-0">Go to Frame:</label>
+				  <input type="number" class="form-control form-control-sm" id="frame-jump-input" style="width: 120px;">
+				  <button class="btn btn-sm btn-outline-info ms-2" onclick="jumpToFrame()">Go</button>
+				</div>
+
+				<!-- Section 5: Navigation Controls -->
 				<div id="instance-nav-controls" class="mt-2">
 					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(-1)" title="Jump to Previous Instance (Shift+Tab)">
 						<i class="bi bi-skip-backward-fill"></i> Prev Instance
