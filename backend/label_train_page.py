@@ -359,7 +359,7 @@ def next_video(shift: int):
     update_counts()
 
 
-@@eel.expose
+@eel.expose
 def next_frame(shift: int):
     """
     Moves forward or backward by a number of frames. If an instance is selected,
