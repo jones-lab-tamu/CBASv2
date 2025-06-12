@@ -1,168 +1,95 @@
 # Installing CBAS from Source (Windows)
 
-This guide provides step-by-step instructions for installing either the stable v2 or the beta v3 of the CBAS application on a Windows machine.
+This guide provides step-by-step instructions for installing the CBAS application on a Windows machine. The primary focus is on the modern v3 (Beta) desktop application.
 
-## 1. Install Primary Dependencies
+## Section 1: Installing CBAS v3 (BETA - Recommended)
 
-These tools are required for **both** v2 and v3.
+These are the complete instructions for installing the current-generation desktop application.
+
+### Step 1.1: Install Primary Dependencies
 
 1.  **Git:** The version control system used to download the code.
     *   Download from: [https://git-scm.com/download/win](https://git-scm.com/download/win) and install using the default settings.
 
-2.  **Python 3.10 or 3.11:** The core programming language for the backend.
-    *   Download from: [https://www.python.org/downloads/](https://www.python.org/downloads/) (select "Windows installer (64-bit)").
-    *   During installation, **it is crucial that you check the box that says "Add Python to PATH"**.
+2.  **Python (64-bit, version 3.11):** This specific version is required for compatibility with PyTorch.
+    *   Download the **"Windows installer (64-bit)"** for Python 3.11 from here: [https://www.python.org/downloads/release/python-3119/](https://www.python.org/downloads/release/python-3119/)
+    *   During installation, **it is essential that you check the box that says "Add python.exe to PATH"**.
 
-3.  **FFmpeg:** A powerful tool for video processing used by CBAS for recording.
+3.  **Node.js (LTS version):** Required for the Electron user interface.
+    *   Download the LTS version from: [https://nodejs.org/](https://nodejs.org/). Run the installer with default settings.
+
+4.  **FFmpeg:** A powerful tool for video processing used by CBAS for recording.
     *   Download the "essentials" build from: [https://gyan.dev/ffmpeg/builds/](https://gyan.dev/ffmpeg/builds/).
     *   Unzip the file and move the resulting folder to a permanent location (e.g., `C:\`).
     *   Add its `bin` folder to your Windows PATH environment variable (e.g., `C:\ffmpeg-7.0-essentials_build\bin`).
 
-4.  **VLC Media Player (Optional):** Used for the "Live View" feature.
-    *   Download from: [https://www.videolan.org/vlc/](https://www.videolan.org/).
-
-## 2. Install Node.js (Required for v3 Beta)
-
-If you intend to install the v3 Beta, you must also install **Node.js**.
-
-*   Download the LTS version from: [https://nodejs.org/](https://nodejs.org/).
-*   Run the installer with default settings.
-
-## 3. Install and Run CBAS
+### Step 1.2: Install and Run CBAS v3
 
 1.  **Open Command Prompt** and navigate to where you want to store the project.
     ```
     cd C:\Users\YourName\Documents
     ```
 
-2.  **Clone the Repository:** This downloads the CBAS source code.
+2.  **Clone the Repository and Checkout the `main` Branch:**
     ```
     git clone https://github.com/jones-lab-tamu/CBAS.git
-    ```
-
-3.  **Navigate into the Project Folder:**
-    ```
     cd CBAS
+    git checkout main
     ```
 
-4.  **(IMPORTANT) Choose Which Version to Install and Run**
-
-    The next steps depend entirely on which version you want to use.
-
-    ---
-    ### Option A: Install and Run v3 (BETA - Desktop App)
-
-    a. **Switch to the `main` branch:**
-        ```
-        git checkout main
-        ```
-
-    b. **Create and Activate a Python Virtual Environment:**
-        ```
-        python -m venv venv
-		```
-		```
-        .\venv\Scripts\activate
-        ```
-
-    c. **Install Python Dependencies:**
-        ```
-        pip install -r requirements.txt
-        ```
-
-    d. **Install PyTorch for GPU (Required):** This step installs the correct version of PyTorch needed for modern NVIDIA GPUs (RTX 20-series and newer).
-        ```
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-        ```
-
-    e. **Install Node.js Dependencies:**
-        ```
-        npm install
-        ```
-
-    f. **Run the Application:**
-        ```
-        npm start
-        ```
-
-    ---
-    ### Option B: Install and Run v2 (Stable - Web Browser App)
-    
-    *Note: v2 requires an older CUDA toolkit and Visual Studio for some dependencies. This setup may conflict with the v3 installation if performed in the same environment.*
-
-    a. **Switch to the `v2-stable` branch:**
-        ```
-        git checkout v2-stable
-        ```
-
-    b. **Create and Activate a Python Virtual Environment:** (It is recommended to use a different folder or environment name if you also have v3).
-        ```
-        python -m venv venv-v2
-		```
-		```
-        .\venv-v2\Scripts\activate
-        ```
-
-    c. **Install General Python Dependencies:**
-        ```
-        pip install -r requirements.txt
-        ```
-    
-    d. **Install PyTorch for CUDA 11.8:**
-        ```
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-        ```
-        
-    e. **Install Visual Studio Build Tools:**
-       *   Download from: [https://visualstudio.microsoft.com/visual-cpp-build-tools/](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
-       *   Run the installer. In the workloads section, check the box for **"Desktop development with C++"** and click "Install".
-
-    f. **Run the Application:**
-        ```
-        python backend/app.py
-        ```
-    ---
-
-## 5. Updating CBAS
-
-
-To update your local copy of CBAS to the latest version, follow these steps:
-
-1.  **Open Command Prompt** and navigate to your `CBAS` project folder.
+3.  **Create and Activate a Python Virtual Environment:**
     ```
-    cd C:\Path\To\Your\CBAS
-    ```
-
-2.  **(For v3 users) Activate your virtual environment:**
-    ```
+    python -m venv venv
     .\venv\Scripts\activate
     ```
 
-3.  **Make sure you are on the correct branch.**
-    *   For the v3 Desktop App, run: `git checkout main`
-    *   For the v2 Web App, run: `git checkout v2-stable`
-
-4.  **Pull the latest code from GitHub:**
+4.  **Install All Python Dependencies (including PyTorch for GPU):**
+    This single step will install all necessary packages. The PyTorch command is for modern NVIDIA GPUs (RTX 20-series and newer).
     ```
-    git pull
+    pip install -r requirements.txt
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
     ```
 
-5.  **Update your dependencies.** This step is crucial to install any new tools the updated code requires.
+5.  **Install Node.js Dependencies:**
+    ```
+    npm install
+    ```
 
-    *   **If you are using v3 (the `main` branch):**
-        ```
-        # Update Python packages
-        pip install -r requirements.txt
-        
-        # Update Node.js packages (like Electron)
-        npm install
-        ```
+6.  **Run the Application:**
+    ```
+    npm start
+    ```
 
-    *   **If you are using v2 (the `v2-stable` branch):**
-        ```
-        # Update Python packages
-        pip install -r requirements.txt
-        
-        # You may also need to re-run the specific PyTorch install if it has changed
-        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-        ```
+---
+
+## Section 2: Installing Legacy CBAS v2 (For Advanced Users)
+
+**Note:** The legacy v2 version is a browser-based application with different dependencies. It is recommended to install v2 in a completely separate folder and virtual environment to avoid conflicts with the modern v3 application. These instructions require installing the older CUDA Toolkit 11.8.
+
+<details>
+<summary>Click to expand v2 Installation Instructions</summary>
+
+1.  **Install NVIDIA CUDA Toolkit 11.8:** Download and install from [NVIDIA's archive](https://developer.nvidia.com/cuda-11-8-0-download-archive). Use the "Express" installation.
+2.  **Install Visual Studio Build Tools:** Download from [here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and select the "Desktop development with C++" workload.
+3.  **Clone and Checkout `v2-stable` Branch:**
+    ```
+    git clone https://github.com/jones-lab-tamu/CBAS.git cbas-v2
+    cd cbas-v2
+    git checkout v2-stable
+    ```
+4.  **Create and Activate a Separate Virtual Environment:**
+    ```
+    python -m venv venv-v2
+    .\venv-v2\Scripts\activate
+    ```
+5.  **Install Python Dependencies for v2:**
+    ```
+    pip install -r requirements.txt
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    ```
+6.  **Run the Application:**
+    ```
+    python backend/app.py
+    ```
+
+</details>
