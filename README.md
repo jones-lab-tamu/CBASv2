@@ -7,71 +7,74 @@
 > [!WARNING]
 > **This is the development branch for the upcoming CBAS v3.** This version is a complete architectural and functional overhaul and should be considered **experimental**. It may contain bugs or undergo significant changes.
 
-> For the current stable and recommended version, please see the [**`v2-stable` branch**](https://github.com/jones-lab-tamu/CBAS/tree/v2-stable).
+> For the current stable version (v2), please see the [**`v2-stable` branch**](https://github.com/jones-lab-tamu/CBAS/tree/v2-stable).
 
 ---
 
-CBAS (Circadian Behavioral Analysis Suite) is a suite of tools for phenotyping complex animal behaviors. It is designed to automate classification of behaviors from video data and provide a simple interface for visualizing and analyzing the results.
+CBAS (Circadian Behavioral Analysis Suite) is a full-featured application for phenotyping complex animal behaviors. It is designed to automate the classification of behaviors from video data and provide a simple, powerful interface for visualizing and analyzing the results.
 
 *Originally created by Logan Perry and now maintained by the Jones Lab at Texas A&M University.*
 
-CBAS was designed with circadian behavior monitoring in mind. Here's a visualization of what CBAS can do! Note that the behaviors are not set in stone and can be easily changed to fit the user's needs.
+## What's New in CBAS v3?
+
+CBAS v3 is a ground-up rebuild of the original application, focused on stability, performance, and a dramatically improved user workflow.
+
+*   **Standalone Desktop Application:** v3 is now a robust, cross-platform desktop app powered by Electron. It no longer runs in a web browser and can be used completely offline.
+*   **Advanced "Active Learning" Workflow:** The labeling process has been supercharged. You can now pre-label videos with a model and then use the new **Review & Correct** mode to rapidly verify its predictions.
+*   **Confidence-Based Filtering:** Focus your efforts where they matter most. The new interface allows you to filter and view only the behavioral instances the model is least certain about.
+*   **Enhanced Visualization:** Generate side-by-side actograms for direct comparison of multiple behaviors.
+*   **Modern, Stable Backend:** The application's backend has been re-engineered with dedicated worker threads for a stable, responsive, and crash-free experience during intensive tasks like training and inference.
+
 <p align="center">
     <img src=".//assets/realtime.gif" alt="CBAS actograms" style="width: 600px; height: auto;">
 </p>
 <p align="center"> 
 
-###### *(Left) Real-time video recording of an individual mouse over two weeks in a 12h:12h light:dark cycle and in constant darkness. (Right) real-time actogram generation of nine distinct home cage behaviors.* 
+###### *(Left) Real-time video recording of an individual mouse. (Right) Real-time actogram generation of nine distinct home cage behaviors.* 
 
 </p>
 
-## Major New Features in v3
+## Core Modules
 
-*   **Advanced Labeling Workflow:** A new "Review & Correct" mode allows you to pre-label videos with a model and quickly correct its predictions, dramatically speeding up the labeling process.
-*   **Instance-Based Navigation:** Jump directly between behavioral events using `Tab` and `Shift+Tab` instead of scrubbing through frames manually.
-*   **Redesigned User Interface:** A cleaner, more modern UI across all pages for improved usability.
-*   **Robust Backend:** The application's backend has been re-engineered with dedicated worker threads for stability and performance.
+CBAS is a user-friendly, GUI-enabled Python package that consists of three main modules:
 
-## Background
+---
+### Module 1: Acquisition
 
-CBAS is a user-friendly, GUI-enabled Python package that allows for the automated acquisition, classification, and visualization of behaviors over time. It consists of three modules:
-
-- ### Module 1: Acquisition
+The acquisition module is capable of batch processing streaming video data from any number of network-configured real-time streaming protocol (RTSP) IP cameras. This module's core functionality remains consistent with v2.
 
 <p align="center">
-    <img src=".//assets/acquisition_1.png" alt="CBAS Diagram" style="width: 500px; height: auto;">
+    <img src=".//assets/acquisition_1.png" alt="CBAS Acquisition Diagram" style="width: 500px; height: auto;">
 </p>
-<p align="center"> 
 
-The acquisition module is capable of batch processing streaming video data from any number of network-configured real-time streaming protocol (RTSP) IP cameras.
+---
+### Module 2: Classification and Visualization (Majorly Upgraded in v3)
 
-- ### Module 2: Classification and visualization
+This module uses a powerful machine learning model to automatically classify behaviors and provides tools to analyze the results.
+
+*   **High-Performance ML Backend:** CBAS uses a frozen [DINOv2 vision transformer](https://arxiv.org/abs/2304.07193) as its feature-extracting backbone, with a custom LSTM-based model head for time-series classification.
+*   **Multi-Actogram Analysis:** The new visualization interface allows for **tiled, side-by-side comparison of multiple behaviors**, each with a distinct color for clear analysis.
+*   **Interactive Plotting:** All actogram parameters (bin size, start time, thresholds, light cycles) can be adjusted in real-time. You can also toggle the plotting of the acrophase to analyze circadian periodicity.
 
 <p align="center">
-    <img src=".//assets/classification_1.png" alt="CBAS Diagram" style="width: 500px; height: auto;">
+    <img src=".//assets/classification_1.png" alt="CBAS Classification Diagram" style="width: 500px; height: auto;">
 </p>
 <p align="center"> 
+    <img src=".//assets/clocklab.png" alt="CBAS Actogram Example" style="width: 300px; height: auto;">
+</p>
 
-CBAS performs classification using a frozen feature extractor "backbone," the [state-of-the-art DINOv2 vision transformer](https://arxiv.org/abs/2304.07193). We have added a joint long short-term memory and linear layer classification model 'head' onto this backbone to classify behaviors of interest.
+---
+### Module 3: Training (Majorly Upgraded in v3)
+
+The training module in v3 introduces a modern, efficient workflow for creating high-quality, custom datasets and models.
+
+*   **Active Learning Interface:** The new "Review & Correct" mode allows you to pre-label videos with an existing model. You can then use the new **confidence-based filtering and zoomable timeline** to rapidly find and correct the model's mistakes, dramatically reducing manual labeling time.
+*   **Flexible Training Options:** Train models using balanced oversampling or a weighted-loss function to handle rare behaviors.
+*   **Detailed Performance Metrics:** After training, CBAS automatically generates detailed performance reports, F1/precision/recall plots, and confusion matrices to help you evaluate and trust your new custom model.
 
 <p align="center">
-    <img src=".//assets/clocklab.png" alt="CBAS Diagram" style="width: 300px; height: auto;">
+    <img src=".//assets/training_1.png" alt="CBAS Training Diagram" style="width: 750px; height: auto;">
 </p>
-<p align="center"> 
-
-The classification and visualization module enables inference on recorded video and displays acquired behavior time series data as actograms that can be readily exported for offline analysis.
-
-
-
-- ### Module 3: Training (optional)
-
-<p align="center">
-    <img src=".//assets/training_1.png" alt="CBAS Diagram" style="width: 750px; height: auto;">
-</p>
-<p align="center"> 
-
-
-The training module allows the user to create balanced training sets of behaviors of interest, train custom model heads, and validate model performance on a naive test set of behavior instances.
 
 -------
 
@@ -79,40 +82,26 @@ The training module allows the user to create balanced training sets of behavior
 
 We have tested the installation instructions to be as straightforward and user-friendly as possible, even for users with limited programming experience.
 
-[Click here for step-by-step instructions on how to install CBAS from source (for Windows users.)](Installation.md)
+[**Click here for step-by-step instructions on how to install CBAS v3 from source.**](Installation.md)
 
 ------
 
-## Setting up cameras
+## Setup & Use
 
-CBAS will work with any real-time streaming protocol (RTSP) IP camera, but we have provided instructions on how to install power-over-ethernet (PoE) cameras and network switches to allow for the parallel, indefinite recording of up to 24 cameras per network switch.
-
-[Click here for step-by-step instructions on how to set up RTSP IP cameras to automatically record video.](Cameras.md)
-
--------
-
-## Out-of-the-box recording
-
-CBAS comes packaged with the Jones Lab's DINOv2+ joint long short-term memory (LSTM) and linear layer model head to allow users to immediately begin classification of our nine behaviors of interest (eating, drinking, rearing, climbing, grooming, exploring, nesting, digging, and resting). If you want to record these behaviors, you will need to first replicate our recording setup using [these instructions and parts list](Recording_setup.md).
-
-------------------
-
-## Creating a dataset and training a classification model
-
-Since the DINOv2 visual backbone remains static in our training model, users can quickly and easily adapt CBAS for various classification tasks, animal species, and video environments. The training module enables users to create balanced training sets for specific behaviors, train joint LSTM and linear layer models, and validate model performance on a naive test set of behavior instances.
-
-[To learn how to create a dataset and train a classification model, click here](Training.md).
+*   [**Camera Setup:** Click here for instructions on how to set up RTSP IP cameras.](Cameras.md)
+*   [**Recording Setup:** For replicating our specific nine-behavior setup, see these instructions and parts list.](Recording_setup.md)
+*   [**Training a Custom Model:** To learn how to create a new dataset and train a custom classification model, click here.](Training.md)
 
 --------------
-## Hardware requirements
+## Hardware Requirements
 
-While not required, we **strongly** recommend using a NVIDIA GPU with high VRAM to allow for GPU optimization with CUDA.
+While not required, we **strongly** recommend using a modern NVIDIA GPU (RTX 20-series or newer) to allow for GPU-accelerated training and inference.
 
-Our PC specs are:
-- CPU: 12-core AMD Ryzen 9 5900X (more recent installations use a 7900X)
-- RAM: 32 GB DDR5
-- SSD: 1TB+ NVMe SSD
-- GPU: NVIDIA GeForce RTX 3090 24GB (more recent installations use a 4090)
+Our lab's test machines:
+- **CPU:** AMD Ryzen 9 5900X / 7900X
+- **RAM:** 32 GB DDR4/DDR5
+- **SSD:** 1TB+ NVMe SSD
+- **GPU:** NVIDIA GeForce RTX 3090 24GB / 4090 24GB
 
 -----
 
