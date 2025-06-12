@@ -60,7 +60,7 @@ This module uses a powerful machine learning model to automatically classify beh
     <img src=".//assets/classification_1.png" alt="CBAS Classification Diagram" style="width: 500px; height: auto;">
 </p>
 <p align="center"> 
-    <img src=".//assets/clocklab.png" alt="CBAS Actogram Example" style="width: 300px; height: auto;">
+    <img src=".//assets/classification_2.png" alt="CBAS Classification Diagram" style="width: 500px; height: auto;">
 </p>
 
 ---
@@ -73,7 +73,13 @@ The training module in v3 introduces a modern, efficient workflow for creating h
 *   **Detailed Performance Metrics:** After training, CBAS automatically generates detailed performance reports, F1/precision/recall plots, and confusion matrices to help you evaluate and trust your new custom model.
 
 <p align="center">
-    <img src=".//assets/training_1.png" alt="CBAS Training Diagram" style="width: 750px; height: auto;">
+    <img src=".//assets/training_1.png" alt="CBAS Training Diagram" style="width: 500px; height: auto;">
+</p>
+<p align="center">
+    <img src=".//assets/training_2.png" alt="CBAS Training Diagram" style="width: 500px; height: auto;">
+</p>
+<p align="center">
+    <img src=".//assets/training_3.png" alt="CBAS Training Diagram" style="width: 500px; height: auto;">
 </p>
 
 -------
