@@ -359,14 +359,33 @@ def next_video(shift: int):
     update_counts()
 
 
-@eel.expose
+@@eel.expose
 def next_frame(shift: int):
-    """Moves forward or backward by a number of frames and re-renders the image."""
-    if gui_state.label_capture and gui_state.label_capture.isOpened():
+    """
+    Moves forward or backward by a number of frames. If an instance is selected,
+    this movement is constrained to within the boundaries of that instance.
+    """
+    if not (gui_state.label_capture and gui_state.label_capture.isOpened()):
+        return
+
+    new_index = gui_state.label_index + shift
+    
+    # Check if we are in "Inspection Mode" (an instance is selected)
+    if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
+        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+        start_frame = instance.get("start", 0)
+        end_frame = instance.get("end", 0)
+        
+        # Constrain the new index to the boundaries of the selected instance
+        gui_state.label_index = max(start_frame, min(new_index, end_frame))
+
+    else:
+        # Otherwise, behave as normal (free scrolling)
         total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
         if total_frames > 0:
-            gui_state.label_index = (gui_state.label_index + shift) % total_frames
-            render_image()
+            gui_state.label_index = new_index % total_frames
+            
+    render_image()
 
 
 @eel.expose
