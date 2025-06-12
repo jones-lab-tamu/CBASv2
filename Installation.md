@@ -61,14 +61,16 @@
    1. Important: in this entire step, be patient and wait until the command is actually finished. For some steps (especially step 10), it may seem like nothing is happening, but it is.
    2. In command prompt, navigate to a directory where you want to house the CBAS code
       1. Example: type `cd C:\Users\Jones-Lab\Documents\`
-   3. Type `git clone https://github.com/jones-lab-tamu/CBASv2.git`
+   3. Type `git clone https://github.com/jones-lab-tamu/CBAS.git cbas-v2`
    4. Enter the CBASv2 folder
-      1. Type `cd CBASv2`
+      1. Type `cd cbas-v2`
+   5. Switch to the stable branch
+      1. Type `git checkout v2-stable1
    5. Create a virtual environment for CBAS using Python 3.10
-      1. Type `py -3.10 -m venv venv`
+      1. Type `py -3.10 -m venv venv-v2`
    6. Activate virtual environment
-      1. Type `.\venv\Scripts\activate`
-      2. `(venv)` will be in parentheses in the terminal.
+      1. Type `.\venv-v2\Scripts\activate`
+      2. `(venv-v2)` will be in parentheses in the terminal.
    7. Optional: upgrade pip (not necessary, but the terminal will yell at you if it's out of date)
       1. Type `python -m pip install --upgrade pip`
    8. Install required packages
@@ -86,15 +88,15 @@
       1. Type `python backend/app.py`
       2. Be patient waiting for it to start for the first time!
    2. If starting from a new command prompt
-      1. Enter the CBASv2 folder
-         1. Example: type `cd C:\Users\Jones-Lab\Documents\CBASv2`
+      1. Enter the CBAS folder
+         1. Example: type `cd C:\Users\Jones-Lab\Documents\CBAS`
       2. Type `dir`
-      3. Type `.\venv\Scripts\activate`
+      3. Type `.\venv-v2\Scripts\activate`
       4. Type `python backend/app.py`
    
 ## 6. Automatically updating CBAS (when needed)
    1. In command prompt, enter the CBASv2 folder
-      1. Example: type `cd C:\Users\Jones-Lab\Documents\CBASv2`
+      1. Example: type `cd C:\Users\Jones-Lab\Documents\CBAS`
    2. Type `git pull origin v2-stable`
 
 
