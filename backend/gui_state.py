@@ -75,6 +75,12 @@ label_behavior_colors: List[str] = []
 label_confirmation_mode: bool = False
 """A flag to indicate if the user is in the final 'commit' confirmation view."""
 
+label_confidence_threshold: int = 100
+"""The current confidence threshold (0-100) set by the user."""
+
+label_unfiltered_instances: List[Dict[str, Any]] = []
+"""Stores the complete, original list of pre-labeled instances before filtering."""
+
 # Use a type hint for the colormap object if possible, otherwise fallback to Any.
 if TYPE_CHECKING:
     label_col_map: Union[Colormap, None] = None

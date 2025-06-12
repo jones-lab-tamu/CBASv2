@@ -306,11 +306,42 @@
     </div>
   </div>
 
-  <!-- Keyboard Controls Cheat Sheet (Dynamically filled by JS) -->
-  <div id="labeling-cheat-sheet" class="container text-light mt-3"
-    style="display: none; max-width: 95vw; min-width: 750px;">
+<!-- Keyboard Controls and Confidence Filter -->
+<div id="labeling-cheat-sheet" class="container text-light mt-3" style="display: none; max-width: 95vw; min-width: 750px;">
+  <div class="card bg-dark">
+    <!-- The header now contains the confidence filter -->
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0 text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5>
+      <div id="confidence-filter-container" class="d-flex align-items-center w-50" style="display: none;">
+        <label for="confidence-slider" class="form-label me-3 mb-0 text-nowrap text-light">Filter Confidence < </label>
+        <input type="range" class="form-range" min="0" max="100" step="1" value="100" id="confidence-slider">
+        <span id="slider-value-display" class="ms-3 badge bg-info" style="width: 55px;">100%</span>
+		<button id="reset-slider-btn" class="btn btn-sm btn-outline-secondary ms-2">Reset</button>
+      </div>
+    </div>
+    <!-- The body contains the keyboard shortcuts -->
+    <div class="card-body" style="font-size: 0.9rem;">
+      <div class="row">
+        <div class="col-md-6">
+          <ul class="list-unstyled">
+            <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
+            <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame (within instance)</li>
+            <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
+            <li><kbd>Enter</kbd> : Confirm / Lock / Unlock Instance</li>
+          </ul>
+        </div>
+        <div class="col-md-6">
+          <ul class="list-unstyled">
+            <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
+            <li><kbd>Delete</kbd> : Delete instance at current frame</li>
+            <li><kbd>Backspace</kbd> : Undo last added label</li>
+            <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
+          </ul>
+        </div>
+      </div>
+    </div>
   </div>
-
+</div>
 
   <!-- =================================================================
   SCRIPTS

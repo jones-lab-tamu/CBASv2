@@ -213,5 +213,10 @@ kbd {
   user-select: none; /* Prevents text from being selected */
 }
 
+.timeline-filtered .timeline-image-wrapper img {
+  /* Add a subtle blue glow to indicate a filter is active */
+  box-shadow: 0 0 8px 2px rgba(13, 110, 253, 0.5); 
+}
+
 /* NOTE: SourceMappingURL is a developer tool feature. */
 /*# sourceMappingURL=index.css.map */

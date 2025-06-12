@@ -192,6 +192,9 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
         gui_state.label_probability_df = probability_df
         # Ensure confirmation mode is always turned off when starting a new session.
         gui_state.label_confirmation_mode = False
+        gui_state.label_confidence_threshold = 100
+        
+        eel.setConfirmationModeUI(False)()
         
         # 3. Set Up Dataset and Colormap
         dataset: cbas.Dataset = gui_state.proj.datasets[name]
@@ -214,8 +217,18 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
         if preloaded_instances:
             labeling_mode = 'review'
             model_name_for_ui = name
-            print(f"Applying {len(preloaded_instances)} pre-loaded instances.")
-            for pred_inst in preloaded_instances:
+
+            # Store the complete, unfiltered list of predictions
+            gui_state.label_unfiltered_instances = preloaded_instances.copy()
+            
+            # Apply the initial (default) filter
+            initial_threshold = gui_state.label_confidence_threshold / 100.0
+            filtered_instances = [
+                p for p in preloaded_instances if p.get('confidence', 1.0) < initial_threshold
+            ]
+            
+            print(f"Applying {len(filtered_instances)} initially filtered instances.")
+            for pred_inst in filtered_instances:
                 is_overlapping = any(max(pred_inst['start'], h['start']) <= min(pred_inst['end'], h['end']) for h in gui_state.label_session_buffer)
                 if not is_overlapping:
                     gui_state.label_session_buffer.append(pred_inst)
@@ -343,6 +356,35 @@ def save_session_labels():
     # Trigger a final re-render to show the clean state
     render_image()
 
+@eel.expose
+def refilter_instances(new_threshold: int):
+    """
+    Re-filters the session buffer based on a new confidence threshold and re-renders.
+    """
+    print(f"Refiltering instances with threshold < {new_threshold}%")
+    gui_state.label_confidence_threshold = new_threshold
+    
+    # Always start from the complete, unfiltered list
+    unfiltered = gui_state.label_unfiltered_instances
+    
+    # Get existing human labels so we don't discard them
+    human_labels = [inst for inst in gui_state.label_session_buffer if 'confidence' not in inst]
+    
+    # Apply the new filter
+    threshold_float = new_threshold / 100.0
+    newly_filtered = [
+        p for p in unfiltered if p.get('confidence', 1.0) < threshold_float
+    ]
+    
+    # Combine human labels with the newly filtered predictions
+    gui_state.label_session_buffer = human_labels + newly_filtered
+    
+    # Reset navigation state and re-render
+    gui_state.selected_instance_index = -1
+    eel.highlightBehaviorRow(None)()
+    eel.updateConfidenceBadge(None, None)()
+    render_image()
+    update_counts()
 
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: IN-SESSION LABELING ACTIONS

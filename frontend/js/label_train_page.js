@@ -15,6 +15,9 @@ let labelingInterfaceActive = false;
 /** Navigation speed multiplier for arrow keys during labeling. */
 let scrubSpeedMultiplier = 1;
 
+/** Debounce timer for confidence filter */ 
+let confidenceFilterDebounceTimer;
+
 /**
  * Stores the directory tree for recordings, populated when a modal needs it.
  * @type {Object<string, string[]>}
@@ -202,6 +205,14 @@ function buildLabelingUI(behaviors, colors) {
     document.getElementById('datasets').style.display = 'none';
     document.getElementById('label').style.display = 'flex';
     document.getElementById('labeling-cheat-sheet').style.display = 'block';
+	
+    const confidenceSlider = document.getElementById('confidence-slider');
+    const sliderValueDisplay = document.getElementById('slider-value-display');
+    if (confidenceSlider && sliderValueDisplay) {
+        confidenceSlider.value = 100;
+        sliderValueDisplay.textContent = '100%';
+    }	
+	
 }
 
 /** Sets the UI mode for labeling (scratch vs. review) and updates controls text. */
@@ -215,34 +226,17 @@ function setLabelingModeUI(mode, modelName = '') {
         controlsHeader.classList.remove('bg-dark');
         controlsHeader.classList.add('bg-success');
         controlsHeader.querySelector('h5').innerHTML = `Reviewing: <span class="badge bg-light text-dark">${modelName}</span>`;
-        cheatSheet.innerHTML = `
-        <div class="card bg-dark">
-          <div class="card-header"><h5 class="text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5></div>
-          <div class="card-body" style="font-size: 0.9rem;">
-            <div class="row">
-              <div class="col-md-6">
-                <ul class="list-unstyled">
-                  <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
-                  <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame (within instance)</li>
-                  <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
-                  <li><kbd>Enter</kbd> : Confirm / Lock / Unlock Instance</li>
-                </ul>
-              </div>
-              <div class="col-md-6">
-                <ul class="list-unstyled">
-                  <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
-                  <li><kbd>Delete</kbd> : Delete instance at current frame</li>
-                  <li><kbd>Backspace</kbd> : Undo last added label</li>
-                  <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </div>`;
+        
+        // We can now just use the existing cheat sheet div for the content
+        const reviewControlsCard = cheatSheet.querySelector('.card');
+        if(reviewControlsCard) reviewControlsCard.style.display = 'block';
+
     } else { // 'scratch' mode
         controlsHeader.classList.remove('bg-success');
         controlsHeader.classList.add('bg-dark');
         controlsHeader.querySelector('h5').innerHTML = `Behaviors (Click to label)`;
+        
+        // We build the scratch cheat sheet dynamically or have a separate div for it
         cheatSheet.innerHTML = `
             <div class="card bg-dark">
               <div class="card-header"><h5>Labeling Controls</h5></div>
@@ -266,6 +260,12 @@ function setLabelingModeUI(mode, modelName = '') {
                 </div>
               </div>
             </div>`;
+    }
+    
+    // Targeting the container within the cheat sheet's header
+    const filterContainer = document.getElementById('confidence-filter-container');
+    if (filterContainer) {
+        filterContainer.style.display = (mode === 'review') ? 'flex' : 'none';
     }
 }
 
@@ -818,4 +818,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('createDatasetButton')?.addEventListener('click', submitCreateDataset);
     document.getElementById('trainModelButton')?.addEventListener('click', submitTrainModel);
     document.getElementById('startClassificationButton')?.addEventListener('click', submitStartClassification);
+
+    const confidenceSlider = document.getElementById('confidence-slider');
+    const sliderValueDisplay = document.getElementById('slider-value-display');
+    if (confidenceSlider && sliderValueDisplay) {
+        confidenceSlider.addEventListener('input', function() {
+            // Update the percentage display immediately
+            sliderValueDisplay.textContent = `${this.value}%`;
+
+			const timelineContainer = document.getElementById('full-timeline-section');
+			if (timelineContainer) {
+				if (parseInt(this.value) < 100) {
+					timelineContainer.classList.add('timeline-filtered');
+				} else {
+					timelineContainer.classList.remove('timeline-filtered');
+				}
+			}
+
+            // Debounce the call to the backend
+            clearTimeout(confidenceFilterDebounceTimer);
+            confidenceFilterDebounceTimer = setTimeout(() => {
+                eel.refilter_instances(parseInt(this.value))();
+            }, 400); // 400ms delay
+        });
+    }
+
+	const resetSliderBtn = document.getElementById('reset-slider-btn');
+	if (resetSliderBtn) {
+		resetSliderBtn.addEventListener('click', function() {
+			const slider = document.getElementById('confidence-slider');
+			const display = document.getElementById('slider-value-display');
+			const timelineContainer = document.getElementById('full-timeline-section');
+			
+			if (slider && display) {
+				slider.value = 100;
+				display.textContent = '100%';
+
+				// Explicitly remove the 'timeline-filtered' class when resetting.
+				if (timelineContainer) {
+					timelineContainer.classList.remove('timeline-filtered');
+				}
+				
+				// Trigger the filter update
+				eel.refilter_instances(100)();
+			}
+		});
+	}
+
 });
