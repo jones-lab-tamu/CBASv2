@@ -1,68 +1,71 @@
 # Installing CBAS from Source (Windows)
 
-This guide provides step-by-step instructions for installing the CBAS application on a Windows machine. The primary focus is on the modern v3 (Beta) desktop application.
+This guide provides step-by-step instructions for installing the CBAS v3 (Beta) desktop application.
 
-## Section 1: Installing CBAS v3 (BETA - Recommended)
+## Step 1: Install Primary Dependencies
 
-These are the complete instructions for installing the current-generation desktop application.
+1.  **Git:** Download from [https://git-scm.com/download/win](https://git-scm.com/download/win) and install using the default settings.
 
-### Step 1.1: Install Primary Dependencies
+2.  **Python 3.11 (64-bit):**
+    *   **CRITICAL:** This specific version of Python is required for compatibility with the GPU-accelerated libraries.
+    *   **Uninstall any other Python versions** from your system via "Add or remove programs" to avoid conflicts.
+    *   Download the **"Windows installer (64-bit)" for Python 3.11.9** from the official site: [https://www.python.org/downloads/release/python-3119/](https://www.python.org/downloads/release/python-3119/)
+    *   Run the installer. On the first screen, **check the box that says "Add python.exe to PATH"**.
 
-1.  **Git:** The version control system used to download the code.
-    *   Download from: [https://git-scm.com/download/win](https://git-scm.com/download/win) and install using the default settings.
+3.  **Node.js (LTS version):** Download the LTS version from [https://nodejs.org/](https://nodejs.org/) and install with default settings.
 
-2.  **Python (64-bit, version 3.11):** This specific version is required for compatibility with PyTorch.
-    *   Download the **"Windows installer (64-bit)"** for Python 3.11 from here: [https://www.python.org/downloads/release/python-3119/](https://www.python.org/downloads/release/python-3119/)
-    *   During installation, **it is essential that you check the box that says "Add python.exe to PATH"**.
-
-3.  **Node.js (LTS version):** Required for the Electron user interface.
-    *   Download the LTS version from: [https://nodejs.org/](https://nodejs.org/). Run the installer with default settings.
-
-4.  **FFmpeg:** A powerful tool for video processing used by CBAS for recording.
+4.  **FFmpeg:** Required for video recording.
     *   Download the "essentials" build from: [https://gyan.dev/ffmpeg/builds/](https://gyan.dev/ffmpeg/builds/).
-    *   Unzip the file and move the resulting folder to a permanent location (e.g., `C:\`).
-    *   Add its `bin` folder to your Windows PATH environment variable (e.g., `C:\ffmpeg-7.0-essentials_build\bin`).
+    *   Unzip the file and move the `ffmpeg-essentials_build` folder to a permanent location like `C:\`.
+    *   Add the `bin` subfolder to your Windows PATH environment variable (e.g., `C:\ffmpeg-essentials_build\bin`).
 
-### Step 1.2: Install and Run CBAS v3
+## Step 2: Install and Run CBAS v3
 
-1.  **Open Command Prompt** and navigate to where you want to store the project.
+1.  **Open a NEW Command Prompt** to ensure it recognizes the newly installed Python 3.11.
+
+2.  **Verify Python Version:** Run the following command. The output must say `Python 3.11.9`.
+    ```
+    python --version
+    ```
+    > If it shows a different version, the PATH is incorrect. Please uninstall other Python versions and reinstall 3.11, ensuring the "Add to PATH" box is checked.
+
+3.  **Clone the Repository and Checkout the `main` Branch:**
     ```
     cd C:\Users\YourName\Documents
-    ```
-
-2.  **Clone the Repository and Checkout the `main` Branch:**
-    ```
     git clone https://github.com/jones-lab-tamu/CBAS.git
     cd CBAS
     git checkout main
     ```
 
-3.  **Create and Activate a Python Virtual Environment:**
+4.  **Create and Activate a Python Virtual Environment:**
     ```
     python -m venv venv
     .\venv\Scripts\activate
     ```
 
-4.  **Install All Python Dependencies (including PyTorch for GPU):**
-    This single step will install all necessary packages. The PyTorch command is for modern NVIDIA GPUs (RTX 20-series and newer).
-    ```
-    pip install -r requirements.txt
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-    ```
+5.  **Install All Python Dependencies:**
+    *   First, upgrade `pip` within the virtual environment:
+        ```
+        python.exe -m pip install --upgrade pip
+        ```
+    *   Then, install the packages from the requirements file and the specific PyTorch version:
+        ```
+        pip install -r requirements.txt
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+        ```
 
-5.  **Install Node.js Dependencies:**
+6.  **Install Node.js Dependencies:**
     ```
     npm install
     ```
 
-6.  **Run the Application:**
+7.  **Run the Application:**
     ```
     npm start
     ```
 
 ---
-
-## Section 2: Installing Legacy CBAS v2 (For Advanced Users)
+## Legacy v2 Installation
 
 **Note:** The legacy v2 version is a browser-based application with different dependencies. It is recommended to install v2 in a completely separate folder and virtual environment to avoid conflicts with the modern v3 application. These instructions require installing the older CUDA Toolkit 11.8.
 
