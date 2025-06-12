@@ -300,24 +300,18 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
 
 @eel.expose
 def save_session_labels():
-    """
-    Applies any pending draft edits and then overwrites the labels for the
-    current video in labels.yaml with the session buffer.
-    """
-    if gui_state.selected_instance_index != -1 and gui_state.label_instance_draft:
-        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
-        new_start = gui_state.label_instance_draft.get('start', instance['start'])
-        new_end = gui_state.label_instance_draft.get('end', instance['end'])
-        
-        # Update the actual instance in the buffer
-        instance['start'] = new_start
-        instance['end'] = new_end
-        
-        # Clear the draft
-        gui_state.label_instance_draft = {}
-        print(f"Finalized draft for instance {gui_state.selected_instance_index}.")
-
+    """Filters for only human-verified/confirmed instances and saves them."""
     if not gui_state.label_dataset or not gui_state.label_videos: return
+
+    final_labels_to_save = []
+    for inst in gui_state.label_session_buffer:
+        # Save an instance if it's human-added OR if it's been confirmed with Enter.
+        if 'confidence' not in inst or inst.get('_confirmed', False):
+            final_inst = inst.copy()
+            # Clean up all temporary keys before saving
+            for key in ['confidence', 'confidences', '_original_start', '_original_end', '_confirmed']:
+                final_inst.pop(key, None)
+            final_labels_to_save.append(final_inst)
 
     current_video_path = gui_state.label_videos[0]
     all_labels = gui_state.label_dataset.labels["labels"]
@@ -327,18 +321,56 @@ def save_session_labels():
             inst for inst in all_labels[behavior_name] if inst.get("video") != current_video_path
         ]
     
-    for corrected_inst in gui_state.label_session_buffer:
+    for corrected_inst in final_labels_to_save:
         all_labels.setdefault(corrected_inst['label'], []).append(corrected_inst)
     
     with open(gui_state.label_dataset.labels_path, "w") as file:
         yaml.dump(gui_state.label_dataset.labels, file, allow_unicode=True)
     
-    print(f"Saved {len(gui_state.label_session_buffer)} labels for video {os.path.basename(current_video_path)}.")
+    print(f"Saved {len(final_labels_to_save)} human-verified/corrected labels for video {os.path.basename(current_video_path)}.")
+    
+    # Reset for the next session
+    gui_state.label_corrected_indices = []
+    gui_state.label_instance_draft = {}
 
 
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: IN-SESSION LABELING ACTIONS
 # =================================================================
+
+@eel.expose
+def confirm_selected_instance():
+    """
+    Toggles the 'confirmed' state of the currently selected instance.
+    If un-confirming, it also reverts any boundary edits to their original state.
+    """
+    if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
+        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+        
+        # Check the current state of the instance
+        is_currently_confirmed = instance.get('_confirmed', False)
+
+        if is_currently_confirmed:
+            # --- UNLOCK LOGIC ---
+            # It's already confirmed, so un-confirm it and revert changes.
+            instance['_confirmed'] = False
+            
+            # Revert to original boundaries if they exist
+            if '_original_start' in instance:
+                instance['start'] = instance['_original_start']
+                instance['end'] = instance['_original_end']
+            
+            print(f"Unlocked instance {gui_state.selected_instance_index} and reverted changes.")
+        
+        else:
+            # --- LOCK/CONFIRM LOGIC ---
+            # It's not confirmed, so confirm it.
+            # This "bakes in" any edits made with []
+            instance['_confirmed'] = True
+            print(f"Confirmed instance {gui_state.selected_instance_index}.")
+            
+        # Re-render to show the change in visual state (border color, boundaries)
+        render_image()
 
 @eel.expose
 def handle_click_on_label_image(x: int, y: int):
@@ -450,39 +482,25 @@ def jump_to_instance(direction: int):
 @eel.expose
 def update_instance_boundary(boundary_type: str):
     """
-    Updates the DRAFT start or end frame for the currently selected instance,
-    with validation to prevent start > end.
+    Directly updates the start or end frame of the currently selected instance
+    after validating the change. Stores original boundaries on first edit.
     """
-    if gui_state.selected_instance_index == -1 or gui_state.selected_instance_index >= len(gui_state.label_session_buffer):
-        return
+    if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
+        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+        current_frame = gui_state.label_index
 
-    instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
-    current_frame = gui_state.label_index
+        # On first edit, store the original boundaries permanently.
+        if '_original_start' not in instance:
+            instance['_original_start'] = instance['start']
+            instance['_original_end'] = instance['end']
+            instance['_confirmed'] = False # Mark as edited but not yet confirmed
 
-    if boundary_type == 'start':
-        # Get the current 'end' boundary, using the draft if it exists, otherwise the original.
-        end_boundary = gui_state.label_instance_draft.get('end', instance.get('end', float('inf')))
+        if boundary_type == 'start' and current_frame < instance['end']:
+            instance['start'] = current_frame
+        elif boundary_type == 'end' and current_frame > instance['start']:
+            instance['end'] = current_frame
         
-        # VALIDATION: Only update if the new start is before the end.
-        if current_frame < end_boundary:
-            gui_state.label_instance_draft['start'] = current_frame
-            print(f"Drafted instance start to {current_frame}")
-        else:
-            print(f"Invalid: Attempted to set start ({current_frame}) after end ({end_boundary}). Ignoring.")
-
-    elif boundary_type == 'end':
-        # Get the current 'start' boundary, using the draft if it exists, otherwise the original.
-        start_boundary = gui_state.label_instance_draft.get('start', instance.get('start', float('-inf')))
-        
-        # VALIDATION: Only update if the new end is after the start.
-        if current_frame > start_boundary:
-            gui_state.label_instance_draft['end'] = current_frame
-            print(f"Drafted instance end to {current_frame}")
-        else:
-            print(f"Invalid: Attempted to set end ({current_frame}) before start ({start_boundary}). Ignoring.")
-    
-    # Re-render to show the change (or lack thereof) immediately
-    render_image()
+        render_image()
 
 @eel.expose
 def get_zoom_range_for_click(x_pos: int) -> int:
@@ -662,8 +680,8 @@ def start_classification(dataset_name_for_model: str, recordings_whitelist_paths
 
 def render_image():
     """
-    Renders the current video frame, timelines, and overlays. Draws a two-layered
-    zoom bar if a draft edit is in progress.
+    Renders the current video frame, timelines, and overlays. Persistently shows
+    corrected boundaries on the zoom bar for confirmed instances.
     """
     if not gui_state.label_capture or not gui_state.label_capture.isOpened():
         eel.updateLabelImageSrc(None, None, None)(); return
@@ -679,30 +697,34 @@ def render_image():
     if not ret or frame is None:
         eel.updateLabelImageSrc(None, None, None)(); return
 
-    # --- 1. Generate Main Video Frame Blob ---
+    main_frame_blob, timeline_blob, zoom_blob = None, None, None
+
+    # 1. Generate Main Video Frame Blob
     frame_resized = cv2.resize(frame, (500, 500))
     _, encoded_main_frame = cv2.imencode(".jpg", frame_resized)
     main_frame_blob = base64.b64encode(encoded_main_frame.tobytes()).decode("utf-8")
 
-    # --- 2. Generate Full Timeline Blob ---
+    # 2. Generate Full Timeline Blob
     timeline_canvas = np.full((50, 500, 3), 100, dtype=np.uint8)
     timeline_canvas_with_overlays = fill_colors(timeline_canvas, total_frames)
-    
     marker_x = int(500 * current_frame_idx / total_frames)
     cv2.line(timeline_canvas_with_overlays, (marker_x, 0), (marker_x, 50), (0, 0, 255), 2)
-    
     _, encoded_timeline = cv2.imencode(".jpg", timeline_canvas_with_overlays)
     timeline_blob = base64.b64encode(encoded_timeline.tobytes()).decode("utf-8")
 
     # --- 3. Generate Zoom Timeline Blob (ALWAYS) ---
     zoom_canvas = np.full((50, 500, 3), 100, dtype=np.uint8)
-
     if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
         instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
-        inst_len = instance['end'] - instance['start']
+        
+        # Use original boundaries for context if they exist, otherwise current ones.
+        original_start = instance.get('_original_start', instance['start'])
+        original_end = instance.get('_original_end', instance['end'])
+        
+        inst_len = original_end - original_start
         context = inst_len * 2
-        zoom_start = max(0, instance['start'] - context)
-        zoom_end = min(total_frames, instance['end'] + context)
+        zoom_start = max(0, original_start - context)
+        zoom_end = min(total_frames, original_end + context)
         
         if zoom_end > zoom_start:
             try:
@@ -710,25 +732,20 @@ def render_image():
                 color_hex = gui_state.label_behavior_colors[b_idx].lstrip("#")
                 bgr_color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
 
-                # Layer 1: Draw original instance with low opacity
-                orig_start_px = int(500 * (instance['start'] - zoom_start) / (zoom_end - zoom_start))
-                orig_end_px = int(500 * (instance['end'] - zoom_start) / (zoom_end - zoom_start))
-                
-                overlay = zoom_canvas.copy()
-                cv2.rectangle(overlay, (orig_start_px, 5), (orig_end_px, 45), bgr_color, -1)
-                cv2.addWeighted(overlay, 0.4, zoom_canvas, 0.6, 0, zoom_canvas) # 40% opacity
+                # If it has been edited, show the original as a faded background.
+                if '_original_start' in instance:
+                    orig_start_px = int(500 * (instance['_original_start'] - zoom_start) / (zoom_end - zoom_start))
+                    orig_end_px = int(500 * (instance['_original_end'] - zoom_start) / (zoom_end - zoom_start))
+                    overlay = zoom_canvas.copy()
+                    cv2.rectangle(overlay, (orig_start_px, 5), (orig_end_px, 45), bgr_color, -1)
+                    cv2.addWeighted(overlay, 0.4, zoom_canvas, 0.6, 0, zoom_canvas)
 
-                # Layer 2: Draw the draft boundaries on top, fully opaque
-                draft_start = gui_state.label_instance_draft.get('start', instance['start'])
-                draft_end = gui_state.label_instance_draft.get('end', instance['end'])
-                draft_start_px = int(500 * (draft_start - zoom_start) / (zoom_end - zoom_start))
-                draft_end_px = int(500 * (draft_end - zoom_start) / (zoom_end - zoom_start))
+                # Draw the current boundaries (which may be corrected) as the main bar.
+                start_px = int(500 * (instance['start'] - zoom_start) / (zoom_end - zoom_start))
+                end_px = int(500 * (instance['end'] - zoom_start) / (zoom_end - zoom_start))
+                cv2.rectangle(zoom_canvas, (start_px, 5), (end_px, 45), bgr_color, -1)
                 
-                cv2.rectangle(zoom_canvas, (draft_start_px, 5), (draft_end_px, 45), bgr_color, -1)
-                cv2.rectangle(zoom_canvas, (draft_start_px, 5), (draft_end_px, 45), (255, 255, 255), 1)
-
-            except (ValueError, IndexError):
-                pass 
+            except (ValueError, IndexError): pass 
 
             marker_x_zoom = int(500 * (current_frame_idx - zoom_start) / (zoom_end - zoom_start))
             cv2.line(zoom_canvas, (marker_x_zoom, 0), (marker_x_zoom, 50), (0, 0, 255), 2)
@@ -763,10 +780,19 @@ def fill_colors(canvas_img: np.ndarray, total_frames: int) -> np.ndarray:
                 overlay = canvas_img.copy()
                 cv2.rectangle(overlay, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
                 cv2.addWeighted(overlay, confidence, canvas_img, 1 - confidence, 0, canvas_img)
-                cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, 1)
+                
+                # --- CORRECTED LOGIC ---
+                # Check the instance's own '_confirmed' flag.
+                is_confirmed = 'confidence' not in inst or inst.get('_confirmed', False)
+                
+                border_color = (255, 255, 255) if is_confirmed else bgr_color
+                border_thickness = 2 if is_confirmed else 1
+                cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), border_color, border_thickness)
 
                 if i == gui_state.selected_instance_index:
-                    cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), (255, 255, 255), 3)
+                    cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), (0, 255, 255), 2) # Cyan highlight
+                # --- END OF CORRECTION ---
+
         except (ValueError, IndexError):
             continue
 

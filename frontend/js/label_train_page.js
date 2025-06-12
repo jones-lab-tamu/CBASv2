@@ -217,28 +217,29 @@ function setLabelingModeUI(mode, modelName = '') {
         controlsHeader.classList.add('bg-success');
         controlsHeader.querySelector('h5').innerHTML = `Reviewing: <span class="badge bg-light text-dark">${modelName}</span>`;
         cheatSheet.innerHTML = `
-            <div class="card bg-dark">
-              <div class="card-header"><h5 class="text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5></div>
-              <div class="card-body" style="font-size: 0.9rem;">
-                <div class="row">
-                  <div class="col-md-6">
-                    <ul class="list-unstyled">
-                      <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
-                      <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame</li>
-                      <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
-                    </ul>
-                  </div>
-                  <div class="col-md-6">
-                    <ul class="list-unstyled">
-                      <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label / Start New Label</li>
-                      <li><kbd>Delete</kbd> : Delete instance at current frame</li>
-                      <li><kbd>Backspace</kbd> : Undo last added label</li>
-                      <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
-                    </ul>
-                  </div>
-                </div>
+        <div class="card bg-dark">
+          <div class="card-header"><h5 class="text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5></div>
+          <div class="card-body" style="font-size: 0.9rem;">
+            <div class="row">
+              <div class="col-md-6">
+                <ul class="list-unstyled">
+                  <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
+                  <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame (within instance)</li>
+                  <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
+                  <li><kbd>Enter</kbd> : Confirm / Lock / Unlock Instance</li>
+                </ul>
               </div>
-            </div>`;
+              <div class="col-md-6">
+                <ul class="list-unstyled">
+                  <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
+                  <li><kbd>Delete</kbd> : Delete instance at current frame</li>
+                  <li><kbd>Backspace</kbd> : Undo last added label</li>
+                  <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>`;
     } else { // 'scratch' mode
         controlsHeader.classList.remove('bg-success');
         controlsHeader.classList.add('bg-dark');
@@ -761,6 +762,9 @@ window.addEventListener("keydown", (event) => {
             case "]":
                 eel.update_instance_boundary('end')();
                 break;
+			case "Enter":
+				eel.confirm_selected_instance()();
+				break;
             default:
                 let bIdx = -1;
                 if (event.keyCode >= 49 && event.keyCode <= 57) bIdx = event.keyCode - 49;

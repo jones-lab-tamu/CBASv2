@@ -69,9 +69,6 @@ label_history: List[Dict[str, Any]] = []
 selected_instance_index: int = -1
 """The index within the `label_session_buffer` of the currently highlighted instance. -1 means none."""
 
-label_instance_draft: Dict[str, int] = {}
-"""A dictionary to hold draft edits to an instance's start/end frames."""
-
 label_behavior_colors: List[str] = []
 """The pre-vetted, high-contrast list of hex color strings for the current set of behaviors."""
 
