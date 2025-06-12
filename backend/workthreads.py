@@ -111,7 +111,7 @@ class ClassificationThread(threading.Thread):
             self.whitelist = whitelist
             print(f"[ClassificationThread] Loading model '{model_obj.name}'...")
             try:
-                weights = torch.load(model_obj.weights_path, map_location=self.device)
+                weights = torch.load(model_obj.weights_path, map_location=self.device, weights_only=True)
                 self.torch_model = classifier_head.classifier(
                     in_features=768,
                     out_features=len(model_obj.config["behaviors"]),

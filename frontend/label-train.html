@@ -254,24 +254,43 @@
         </div>
         <!-- Main Content: Video and Controls Panel -->
         <div class="row flex-grow-1">
-          <!-- Left Side: Video Player and Navigation -->
-          <div class="col-md-8 d-flex flex-column justify-content-center align-items-center">
-            <div id="img-section">
-              <img id="label-image" src="" alt="Labeling a video"
-                style="border:2px solid black; max-width: 100%; max-height: 100%; object-fit: contain;"
-                draggable="false">
-            </div>
-            <div id="instance-nav-controls" class="mt-2">
-              <button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(-1)"
-                title="Jump to Previous Instance (Shift+Tab)">
-                <i class="bi bi-skip-backward-fill"></i> Prev Instance
-              </button>
-              <button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(1)"
-                title="Jump to Next Instance (Tab)">
-                Next Instance <i class="bi bi-skip-forward-fill"></i>
-              </button>
-            </div>
-          </div>
+          
+          <!-- Left Side: Video Player and Controls Panel -->
+			<div class="col-md-8 d-flex flex-column justify-content-center align-items-center">
+
+				<!-- Section 1: The Video Player ONLY -->
+				<div id="video-player-section" style="max-width: 504px; border: 2px solid black;">
+					<img id="label-image" src="" alt="Labeling a video" style="max-width: 100%; object-fit: contain;" draggable="false">
+				</div>
+
+				<!-- Section 2: The Full Timeline with its Label -->
+				<div id="full-timeline-section" class="d-flex align-items-center w-100 justify-content-center mt-2" style="max-width: 560px;">
+					<div class="timeline-label"><span>Full</span></div>
+					<div class="timeline-image-wrapper">
+						<img id="full-timeline-image" src="" alt="Full Timeline" style="border:2px solid black; max-width: 100%;" draggable="false">
+					</div>
+				</div>
+
+				<!-- Section 3: The Zoom Timeline with its Label -->
+				<div id="zoom-bar-section" class="d-flex align-items-center w-100 justify-content-center mt-2" style="max-width: 560px;">
+					<div class="timeline-label"><span>Zoom</span></div>
+					<div class="timeline-image-wrapper">
+						<img id="zoom-bar-image" src="" alt="Zoomed timeline" style="border:2px solid #0dcaf0; max-width: 100%;" draggable="false">
+					</div>
+				</div>
+
+				<!-- Section 4: Navigation Controls -->
+				<div id="instance-nav-controls" class="mt-2">
+					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(-1)" title="Jump to Previous Instance (Shift+Tab)">
+						<i class="bi bi-skip-backward-fill"></i> Prev Instance
+					</button>
+					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(1)" title="Jump to Next Instance (Tab)">
+						Next Instance <i class="bi bi-skip-forward-fill"></i>
+					</button>
+				</div>
+
+			</div>
+
           <!-- Right Side: Behavior List -->
           <div class="col-md-4">
             <div id="controls" style="min-width: 156px;">

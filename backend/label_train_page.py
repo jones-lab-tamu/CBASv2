@@ -272,7 +272,7 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
             out_features=len(model_obj.config["behaviors"]),
             seq_len=model_obj.config["seq_len"],
         ).to(device)
-        torch_model.load_state_dict(torch.load(model_obj.weights_path, map_location=device))
+        torch_model.load_state_dict(torch.load(model_obj.weights_path, map_location=device, weights_only=True))
         torch_model.eval()
 
         h5_path = video_path_to_label.replace(".mp4", "_cls.h5")
@@ -300,7 +300,23 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
 
 @eel.expose
 def save_session_labels():
-    """Overwrites the labels for the current video in labels.yaml with the session buffer."""
+    """
+    Applies any pending draft edits and then overwrites the labels for the
+    current video in labels.yaml with the session buffer.
+    """
+    if gui_state.selected_instance_index != -1 and gui_state.label_instance_draft:
+        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+        new_start = gui_state.label_instance_draft.get('start', instance['start'])
+        new_end = gui_state.label_instance_draft.get('end', instance['end'])
+        
+        # Update the actual instance in the buffer
+        instance['start'] = new_start
+        instance['end'] = new_end
+        
+        # Clear the draft
+        gui_state.label_instance_draft = {}
+        print(f"Finalized draft for instance {gui_state.selected_instance_index}.")
+
     if not gui_state.label_dataset or not gui_state.label_videos: return
 
     current_video_path = gui_state.label_videos[0]
@@ -338,7 +354,7 @@ def handle_click_on_label_image(x: int, y: int):
 def next_video(shift: int):
     """Loads the next or previous video in the labeling session's video list."""
     if not gui_state.label_videos:
-        eel.updateLabelImageSrc(None); eel.updateFileInfo("No videos available."); return
+        eel.updateLabelImageSrc(None, None); eel.updateFileInfo("No videos available."); return
 
     gui_state.label_start, gui_state.label_type = -1, -1
     gui_state.label_vid_index = (gui_state.label_vid_index + shift) % len(gui_state.label_videos)
@@ -351,7 +367,7 @@ def next_video(shift: int):
     capture = cv2.VideoCapture(current_video_path)
 
     if not capture.isOpened():
-        eel.updateLabelImageSrc(None); eel.updateFileInfo(f"Error loading video."); gui_state.label_capture = None; return
+        eel.updateLabelImageSrc(None, None); eel.updateFileInfo(f"Error loading video."); gui_state.label_capture = None; return
 
     gui_state.label_capture = capture
     gui_state.label_index = 0
@@ -391,6 +407,9 @@ def next_frame(shift: int):
 @eel.expose
 def jump_to_instance(direction: int):
     """Finds the next/previous instance and jumps the playhead to its start frame."""
+    # Clear any previous draft when jumping to a new instance
+    gui_state.label_instance_draft = {}
+
     if not gui_state.label_session_buffer:
         eel.highlightBehaviorRow(None)()
         eel.updateConfidenceBadge(None, None)() # Clear badge if no instances
@@ -426,6 +445,62 @@ def jump_to_instance(direction: int):
     else:
         eel.highlightBehaviorRow(None)()
         eel.updateConfidenceBadge(None, None)() # Clear badge if no target found
+
+
+@eel.expose
+def update_instance_boundary(boundary_type: str):
+    """
+    Updates the DRAFT start or end frame for the currently selected instance,
+    with validation to prevent start > end.
+    """
+    if gui_state.selected_instance_index == -1 or gui_state.selected_instance_index >= len(gui_state.label_session_buffer):
+        return
+
+    instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+    current_frame = gui_state.label_index
+
+    if boundary_type == 'start':
+        # Get the current 'end' boundary, using the draft if it exists, otherwise the original.
+        end_boundary = gui_state.label_instance_draft.get('end', instance.get('end', float('inf')))
+        
+        # VALIDATION: Only update if the new start is before the end.
+        if current_frame < end_boundary:
+            gui_state.label_instance_draft['start'] = current_frame
+            print(f"Drafted instance start to {current_frame}")
+        else:
+            print(f"Invalid: Attempted to set start ({current_frame}) after end ({end_boundary}). Ignoring.")
+
+    elif boundary_type == 'end':
+        # Get the current 'start' boundary, using the draft if it exists, otherwise the original.
+        start_boundary = gui_state.label_instance_draft.get('start', instance.get('start', float('-inf')))
+        
+        # VALIDATION: Only update if the new end is after the start.
+        if current_frame > start_boundary:
+            gui_state.label_instance_draft['end'] = current_frame
+            print(f"Drafted instance end to {current_frame}")
+        else:
+            print(f"Invalid: Attempted to set end ({current_frame}) before start ({start_boundary}). Ignoring.")
+    
+    # Re-render to show the change (or lack thereof) immediately
+    render_image()
+
+@eel.expose
+def get_zoom_range_for_click(x_pos: int) -> int:
+    """Calculates a new frame index based on a click on the zoom bar."""
+    if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
+        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+        total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+
+        inst_len = instance['end'] - instance['start']
+        context = inst_len * 2
+        zoom_start = max(0, instance['start'] - context)
+        zoom_end = min(total_frames, instance['end'] + context)
+        
+        if zoom_end > zoom_start:
+            # Calculate what frame corresponds to the click position (x_pos out of 500)
+            new_frame = int(zoom_start + (x_pos / 500.0) * (zoom_end - zoom_start))
+            gui_state.label_index = new_frame
+            render_image()
 
 
 def add_instance_to_buffer():
@@ -586,47 +661,93 @@ def start_classification(dataset_name_for_model: str, recordings_whitelist_paths
 # =================================================================
 
 def render_image():
-    """Renders the current video frame with timeline overlays and sends to the UI."""
+    """
+    Renders the current video frame, timelines, and overlays. Draws a two-layered
+    zoom bar if a draft edit is in progress.
+    """
     if not gui_state.label_capture or not gui_state.label_capture.isOpened():
-        eel.updateLabelImageSrc(None)(); return
+        eel.updateLabelImageSrc(None, None, None)(); return
 
     total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-    if total_frames == 0: eel.updateLabelImageSrc(None)(); return
+    if total_frames == 0:
+        eel.updateLabelImageSrc(None, None, None)(); return
 
     current_frame_idx = max(0, min(int(gui_state.label_index), int(total_frames) - 1))
     gui_state.label_capture.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
     ret, frame = gui_state.label_capture.read()
 
-    if ret and frame is not None:
-        frame_resized = cv2.resize(frame, (500, 500))
-        canvas_height = frame_resized.shape[0] + 50
-        canvas = np.zeros((canvas_height, frame_resized.shape[1], 3), dtype=np.uint8)
-        canvas[:-50, :, :] = frame_resized
-        canvas[-50:-1, :, :] = 100
+    if not ret or frame is None:
+        eel.updateLabelImageSrc(None, None, None)(); return
 
-        canvas_with_overlays = fill_colors(canvas)
+    # --- 1. Generate Main Video Frame Blob ---
+    frame_resized = cv2.resize(frame, (500, 500))
+    _, encoded_main_frame = cv2.imencode(".jpg", frame_resized)
+    main_frame_blob = base64.b64encode(encoded_main_frame.tobytes()).decode("utf-8")
 
-        if total_frames > 0:
-            marker_x = int(frame_resized.shape[1] * current_frame_idx / total_frames)
-            cv2.line(canvas_with_overlays, (marker_x, canvas_height - 45), (marker_x, canvas_height - 5), (0, 0, 255), 2)
+    # --- 2. Generate Full Timeline Blob ---
+    timeline_canvas = np.full((50, 500, 3), 100, dtype=np.uint8)
+    timeline_canvas_with_overlays = fill_colors(timeline_canvas, total_frames)
+    
+    marker_x = int(500 * current_frame_idx / total_frames)
+    cv2.line(timeline_canvas_with_overlays, (marker_x, 0), (marker_x, 50), (0, 0, 255), 2)
+    
+    _, encoded_timeline = cv2.imencode(".jpg", timeline_canvas_with_overlays)
+    timeline_blob = base64.b64encode(encoded_timeline.tobytes()).decode("utf-8")
 
-        _, encoded_frame = cv2.imencode(".jpg", canvas_with_overlays)
-        blob = base64.b64encode(encoded_frame.tobytes()).decode("utf-8")
-        eel.updateLabelImageSrc(blob)()
-    else:
-        eel.updateLabelImageSrc(None)()
+    # --- 3. Generate Zoom Timeline Blob (ALWAYS) ---
+    zoom_canvas = np.full((50, 500, 3), 100, dtype=np.uint8)
+
+    if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
+        instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
+        inst_len = instance['end'] - instance['start']
+        context = inst_len * 2
+        zoom_start = max(0, instance['start'] - context)
+        zoom_end = min(total_frames, instance['end'] + context)
+        
+        if zoom_end > zoom_start:
+            try:
+                b_idx = gui_state.label_dataset.labels["behaviors"].index(instance['label'])
+                color_hex = gui_state.label_behavior_colors[b_idx].lstrip("#")
+                bgr_color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
+
+                # Layer 1: Draw original instance with low opacity
+                orig_start_px = int(500 * (instance['start'] - zoom_start) / (zoom_end - zoom_start))
+                orig_end_px = int(500 * (instance['end'] - zoom_start) / (zoom_end - zoom_start))
+                
+                overlay = zoom_canvas.copy()
+                cv2.rectangle(overlay, (orig_start_px, 5), (orig_end_px, 45), bgr_color, -1)
+                cv2.addWeighted(overlay, 0.4, zoom_canvas, 0.6, 0, zoom_canvas) # 40% opacity
+
+                # Layer 2: Draw the draft boundaries on top, fully opaque
+                draft_start = gui_state.label_instance_draft.get('start', instance['start'])
+                draft_end = gui_state.label_instance_draft.get('end', instance['end'])
+                draft_start_px = int(500 * (draft_start - zoom_start) / (zoom_end - zoom_start))
+                draft_end_px = int(500 * (draft_end - zoom_start) / (zoom_end - zoom_start))
+                
+                cv2.rectangle(zoom_canvas, (draft_start_px, 5), (draft_end_px, 45), bgr_color, -1)
+                cv2.rectangle(zoom_canvas, (draft_start_px, 5), (draft_end_px, 45), (255, 255, 255), 1)
+
+            except (ValueError, IndexError):
+                pass 
+
+            marker_x_zoom = int(500 * (current_frame_idx - zoom_start) / (zoom_end - zoom_start))
+            cv2.line(zoom_canvas, (marker_x_zoom, 0), (marker_x_zoom, 50), (0, 0, 255), 2)
+
+    _, encoded_zoom = cv2.imencode(".jpg", zoom_canvas)
+    zoom_blob = base64.b64encode(encoded_zoom.tobytes()).decode("utf-8")
+
+    eel.updateLabelImageSrc(main_frame_blob, timeline_blob, zoom_blob)()
 
 
-def fill_colors(canvas_img: np.ndarray) -> np.ndarray:
-    """Draws colored bars on the timeline using the in-memory session buffer."""
+def fill_colors(canvas_img: np.ndarray, total_frames: int) -> np.ndarray:
+    """Draws colored bars on a timeline canvas using the in-memory session buffer."""
     if not all([gui_state.label_dataset, gui_state.label_videos, gui_state.label_capture, gui_state.label_capture.isOpened()]):
         return canvas_img
 
     behaviors = gui_state.label_dataset.labels.get("behaviors", [])
-    total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
     if total_frames == 0: return canvas_img
 
-    timeline_y, timeline_h, timeline_w = canvas_img.shape[0] - 49, 45, canvas_img.shape[1]
+    timeline_y, timeline_h, timeline_w = 0, canvas_img.shape[0], canvas_img.shape[1]
 
     for i, inst in enumerate(gui_state.label_session_buffer):
         try:
@@ -638,15 +759,10 @@ def fill_colors(canvas_img: np.ndarray) -> np.ndarray:
             end_px = int(timeline_w * (inst.get("end", 0) + 1) / total_frames)
 
             if start_px < end_px:
-                # Confidence rendering logic
-                confidence = inst.get('confidence', 1.0) # Default to 1.0 (solid) if not present
-                # Create a semi-transparent overlay and a solid bar
+                confidence = inst.get('confidence', 1.0)
                 overlay = canvas_img.copy()
                 cv2.rectangle(overlay, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
-                # Blend the overlay with the original canvas based on confidence
                 cv2.addWeighted(overlay, confidence, canvas_img, 1 - confidence, 0, canvas_img)
-
-                # Always draw a solid border so even low-confidence regions are visible
                 cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, 1)
 
                 if i == gui_state.selected_instance_index:

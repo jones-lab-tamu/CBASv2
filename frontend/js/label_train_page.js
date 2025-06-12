@@ -78,10 +78,23 @@ function showErrorOnLabelTrainPage(message) {
 
 /** Updates the labeling image source with a new base64 encoded frame. */
 eel.expose(updateLabelImageSrc);
-function updateLabelImageSrc(base64Val) {
-    const elem = document.getElementById('label-image');
-    if (elem) {
-        elem.src = base64Val ? "data:image/jpeg;base64," + base64Val : "assets/noVideo.png";
+function updateLabelImageSrc(mainFrameBlob, timelineBlob, zoomBlob) {
+    const mainFrameImg = document.getElementById('label-image');
+    const fullTimelineImg = document.getElementById('full-timeline-image');
+    const zoomImg = document.getElementById('zoom-bar-image');
+    const blankGif = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+
+    if (mainFrameImg) {
+        mainFrameImg.src = mainFrameBlob ? "data:image/jpeg;base64," + mainFrameBlob : "assets/noVideo.png";
+    }
+    
+    if (fullTimelineImg) {
+        fullTimelineImg.src = timelineBlob ? "data:image/jpeg;base64," + timelineBlob : blankGif;
+    }
+    
+    // The zoom bar is now always visible, so we just update its source.
+    if (zoomImg) {
+        zoomImg.src = zoomBlob ? "data:image/jpeg;base64," + zoomBlob : blankGif;
     }
 }
 
@@ -210,10 +223,9 @@ function setLabelingModeUI(mode, modelName = '') {
                 <div class="row">
                   <div class="col-md-6">
                     <ul class="list-unstyled">
-                      <li><kbd>Tab</kbd> : Jump to Next Instance</li>
-                      <li><kbd>Shift</kbd> + <kbd>Tab</kbd> : Jump to Previous Instance</li>
+                      <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
                       <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame</li>
-                      <li><kbd>Click Timeline</kbd> : Jump to frame</li>
+                      <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
                     </ul>
                   </div>
                   <div class="col-md-6">
@@ -221,7 +233,7 @@ function setLabelingModeUI(mode, modelName = '') {
                       <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label / Start New Label</li>
                       <li><kbd>Delete</kbd> : Delete instance at current frame</li>
                       <li><kbd>Backspace</kbd> : Undo last added label</li>
-                      <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Previous / Next video</li>
+                      <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
                     </ul>
                   </div>
                 </div>
@@ -248,7 +260,7 @@ function setLabelingModeUI(mode, modelName = '') {
                       <li><kbd>1</kbd> - <kbd>9</kbd> : Start / End a new label</li>
                       <li><kbd>Delete</kbd> : Delete instance at current frame</li>
                       <li><kbd>Backspace</kbd> : Undo last added label</li>
-                      <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Previous / Next video</li>
+                      <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
                     </ul>
                   </div>
                 </div>
@@ -696,18 +708,22 @@ function waitForEelConnection() {
 // --- Global Event Listeners ---
 
 /** Attaches mousedown listener for timeline scrubbing. */
-const labelImageDisplayElement = document.getElementById('label-image');
-if (labelImageDisplayElement) {
-    labelImageDisplayElement.addEventListener('mousedown', function (event) {
+const fullTimelineElement = document.getElementById('full-timeline-image');
+if (fullTimelineElement) {
+    fullTimelineElement.addEventListener('mousedown', function (event) {
+        const x = event.offsetX; // offsetX is simpler when bound to the element
+        eel.handle_click_on_label_image(x, 0)?.();
+        document.addEventListener('mousemove', handleMouseMoveForLabelScrub);
+        document.addEventListener('mouseup', handleMouseUpForLabelScrub);
+    });
+}
+
+const zoomBarImageElement = document.getElementById('zoom-bar-image');
+if (zoomBarImageElement) {
+    zoomBarImageElement.addEventListener('mousedown', function (event) {
         const imageRect = event.target.getBoundingClientRect();
-        const y = event.clientY - imageRect.top;
-        const timelineHeightApproximation = 50;
-        if (y > (imageRect.height - timelineHeightApproximation - 10) && y < (imageRect.height - 5)) {
-            const x = event.clientX - imageRect.left;
-            eel.handle_click_on_label_image(x, y)?.();
-            document.addEventListener('mousemove', handleMouseMoveForLabelScrub);
-            document.addEventListener('mouseup', handleMouseUpForLabelScrub);
-        }
+        const x = event.clientX - imageRect.left;
+        eel.get_zoom_range_for_click(x)();
     });
 }
 
@@ -738,6 +754,12 @@ window.addEventListener("keydown", (event) => {
                 break;
             case "Backspace":
                 eel.pop_instance_from_buffer()();
+                break;
+            case "[":
+                eel.update_instance_boundary('start')();
+                break;
+            case "]":
+                eel.update_instance_boundary('end')();
                 break;
             default:
                 let bIdx = -1;

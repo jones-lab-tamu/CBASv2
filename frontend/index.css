@@ -191,5 +191,27 @@ kbd {
     transition: background-color 0.2s ease-in-out;
 }
 
+/* =================================================================
+   LABELING TIMELINE STYLES
+   ================================================================= */
+
+.timeline-image-wrapper {
+  max-width: 504px; /* Matches the border + image width */
+  flex-grow: 1; /* Allows the image to take up available space */
+}
+
+.timeline-label {
+  writing-mode: vertical-rl; /* Rotates text vertically */
+  text-orientation: mixed;
+  transform: rotate(180deg); /* Flips the rotated text to be readable */
+  color: #adb5bd; /* Bootstrap's muted text color */
+  font-size: 0.8rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin-right: 8px; /* Adds space between label and timeline */
+  letter-spacing: 1px;
+  user-select: none; /* Prevents text from being selected */
+}
+
 /* NOTE: SourceMappingURL is a developer tool feature. */
 /*# sourceMappingURL=index.css.map */
