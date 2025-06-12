@@ -644,20 +644,35 @@ class Project:
                     print(f"Error loading recording {session_dir.path}: {e}")
 
     def _load_models(self):
-        """Loads all trained models from the 'models' directory."""
+        """
+        Loads all models from the project's 'models' directory and also loads
+        the bundled 'JonesLabModel' if it exists in the application's source.
+        """
         self.models = {}
+        
+        # 1. Load user-specific models from the current project directory
         for model_dir in [d for d in os.scandir(self.models_dir) if d.is_dir()]:
             try:
                 self.models[model_dir.name] = Model(model_dir.path)
             except Exception as e:
-                print(f"Error loading model {model_dir.path}: {e}")
-        # Also load the built-in JonesLabModel if it exists
-        jl_model_path = os.path.join(os.path.dirname(__file__), "models", "JonesLabModel")
-        if os.path.isdir(jl_model_path) and "JonesLabModel" not in self.models:
-            try:
-                self.models["JonesLabModel"] = Model(jl_model_path)
-            except Exception as e:
-                print(f"Warning: Could not load built-in JonesLabModel: {e}")
+                print(f"Error loading project model {model_dir.path}: {e}")
+        
+        # 2. Load the bundled JonesLabModel from the application's source code directory
+        try:
+            # Check if a user model isn't already named "JonesLabModel"
+            if "JonesLabModel" not in self.models:
+                # To find the app's root, we go up from the current file's directory.
+                # __file__ is cbas.py, so dirname gives us /backend, and its dirname is the app root.
+                app_root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                bundled_model_path = os.path.join(app_root_dir, "models", "JonesLabModel")
+                
+                if os.path.isdir(bundled_model_path):
+                    print(f"Found bundled JonesLabModel at: {bundled_model_path}")
+                    self.models["JonesLabModel"] = Model(bundled_model_path)
+                else:
+                    print("Bundled JonesLabModel not found, skipping.")
+        except Exception as e:
+            print(f"Warning: Could not load the bundled JonesLabModel: {e}")
 
     def _load_datasets(self):
         """Loads all datasets from the 'data_sets' directory."""
