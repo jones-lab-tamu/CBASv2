@@ -9,6 +9,7 @@ the need for scattered global variables and makes state management more predicta
 
 import threading
 from typing import TYPE_CHECKING, Any, List, Dict, Union
+import pandas as pd
 
 # Import project base classes for type hinting. This is safe as long as these
 # modules do not import gui_state at the top level, avoiding circular dependencies.
@@ -58,6 +59,9 @@ label_type: int = -1
 
 label_session_buffer: List[Dict[str, Any]] = []
 """In-memory buffer holding all labels (both pre-loaded and user-created) for the current video session."""
+
+label_probability_df: Union[pd.DataFrame, None] = None
+"""A pandas DataFrame holding the per-frame probabilities for the currently loaded video."""
 
 label_history: List[Dict[str, Any]] = []
 """A stack of newly created instances, used for the 'Undo' (pop) functionality."""
@@ -112,7 +116,7 @@ recording_observer: Union['Observer', None] = None
 cur_actogram: Union[cbas.Actogram, None] = None
 """The currently generated cbas.Actogram object being displayed on the Visualize page."""
 
-# Task Management for Visualization
+# --- Task Management for Visualization ---
 viz_task_lock: Union[threading.Lock, None] = threading.Lock()
 """A lock to ensure thread-safe access to the visualization task ID."""
 latest_viz_task_id: int = 0

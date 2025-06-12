@@ -125,7 +125,7 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
         print(f"Warning: HDF5 file {file_path} is too short for inference. Skipping.")
         return None
 
-    # This handles the data loading robustly.
+    # This handles the data loading robustly, which is good to keep.
     cls_np_f32 = cls_np.astype(np.float32)
     cls = torch.from_numpy(cls_np_f32 - np.mean(cls_np_f32, axis=0))
     
@@ -147,10 +147,6 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
             
             batch_tensor = torch.stack(batch_windows)
             
-            # Remove the `torch.amp.autocast` context manager.
-            # We only need `torch.no_grad()` for inference. This forces all
-            # operations to use the model's native float32 precision,
-            # preventing the BFloat16 type error.
             with torch.no_grad():
                 logits = model.forward_nodrop(batch_tensor.to(device))
                 
@@ -171,6 +167,7 @@ def infer_file(file_path: str, model: nn.Module, dataset_name: str, behaviors: l
 
     pd.DataFrame(np.array(padded_predictions), columns=behaviors).to_csv(output_file, index=False)
     return output_file
+
 
 def _create_matplotlib_actogram(binned_activity, light_cycle_booleans, tau, bin_size_minutes, plot_title, start_hour_offset, plot_acrophase=False, base_color=None):
     """
@@ -454,6 +451,56 @@ class Dataset:
             if current_event['end'] >= current_event['start']: instances.append(current_event)
         return instances
 
+    def predictions_to_instances_with_confidence(self, csv_path: str, model_name: str, threshold: float = 0.5) -> tuple[list, pd.DataFrame]:
+        """
+        Processes a prediction CSV to find behavior instances and their average confidence.
+        
+        Returns:
+            A tuple containing:
+            - A list of instance dictionaries, each with a 'confidence' key.
+            - The full pandas DataFrame of probabilities.
+        """
+        try:
+            df = pd.read_csv(csv_path)
+        except FileNotFoundError:
+            return [], None
+
+        instances, behaviors = [], self.config.get("behaviors", [])
+        if not behaviors or any(b not in df.columns for b in behaviors):
+            return [], df
+
+        df['predicted_label'] = df[behaviors].idxmax(axis=1)
+        df['max_prob'] = df[behaviors].max(axis=1)
+        
+        in_event, current_event = False, {}
+        for i, row in df.iterrows():
+            is_above_thresh = row['max_prob'] >= threshold
+            if not in_event and is_above_thresh:
+                in_event = True
+                current_event = {"video": csv_path.replace(f"_{model_name}_outputs.csv", ".mp4"), "start": i, "label": row['predicted_label'], "confidences": [row['max_prob']]}
+            elif in_event:
+                if not is_above_thresh or row['predicted_label'] != current_event['label']:
+                    in_event = False
+                    current_event['end'] = i - 1
+                    # Calculate average confidence for the bout
+                    current_event['confidence'] = np.mean(current_event.pop('confidences', [0]))
+                    if current_event['end'] >= current_event['start']:
+                        instances.append(current_event)
+                    
+                    if is_above_thresh: # Start a new event immediately
+                        in_event = True
+                        current_event = {"video": csv_path.replace(f"_{model_name}_outputs.csv", ".mp4"), "start": i, "label": row['predicted_label'], "confidences": [row['max_prob']]}
+                else: # Still in the same event, just append the confidence
+                    current_event['confidences'].append(row['max_prob'])
+
+        if in_event and 'start' in current_event:
+            current_event['end'] = len(df) - 1
+            current_event['confidence'] = np.mean(current_event.pop('confidences', [0]))
+            if current_event['end'] >= current_event['start']:
+                instances.append(current_event)
+                
+        return instances, df
+
 
 class Actogram:
     """Generates and holds data for an actogram visualization."""
@@ -673,7 +720,7 @@ class Project:
         seqs, labels = [], []
         half_seqlen = seq_len // 2
 
-        # 1. Group instances by their source video file to avoid redundant H5 file reads.
+        # Group instances by their source video file to avoid redundant H5 file reads.
         instances_by_video = {}
         for inst in insts:
             video_path = inst.get("video")
@@ -682,7 +729,7 @@ class Project:
         
         total_videos = len(instances_by_video)
         
-        # 2. Iterate through each unique video file, loading it only ONCE.
+        # Iterate through each unique video file, loading it only ONCE.
         for i, (video_path, video_instances) in enumerate(instances_by_video.items()):
             if progress_callback:
                 progress_callback((i + 1) / total_videos * 100)
@@ -706,7 +753,7 @@ class Project:
             # Center the embeddings for this video once.
             cls_centered = cls_arr - np.mean(cls_arr, axis=0)
             
-            # 3. Now process all instances belonging to this specific video.
+            # Now process all instances belonging to this specific video.
             for inst in video_instances:
                 start = int(inst.get("start", -1))
                 end = int(inst.get("end", -1))
@@ -831,7 +878,7 @@ def train_lstm_model(train_set, test_set, seq_len: int, behaviors: list, batch_s
     if len(train_set) == 0: return None, None, -1
     if device is None: device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=(device.type == 'cuda'))
     test_loader = torch.utils.data.DataLoader(test_set, batch_size, shuffle=False, collate_fn=collate_fn) if len(test_set) > 0 else None
 
     model = classifier_head.classifier(in_features=768, out_features=len(behaviors), seq_len=seq_len).to(device)

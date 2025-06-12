@@ -16,6 +16,7 @@ import yaml
 import cv2
 import numpy as np
 import torch
+import pandas as pd
 
 # Project-specific imports
 import cbas
@@ -165,7 +166,7 @@ def get_inferred_videos_for_session(session_dir_rel: str, model_name: str) -> li
 # EEL-EXPOSED FUNCTIONS: LABELING WORKFLOW & ACTIONS
 # =================================================================
 
-def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_instances: list = None):
+def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_instances: list = None, probability_df: pd.DataFrame = None):
     """
     (WORKER) This is the background task that prepares the labeling session. It handles
     all state setup and then calls back to the JavaScript UI when ready.
@@ -188,6 +189,7 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
         gui_state.label_type, gui_state.label_start = -1, -1
         gui_state.label_history, gui_state.label_behavior_colors = [], []
         gui_state.label_session_buffer, gui_state.selected_instance_index = [], -1
+        gui_state.label_probability_df = probability_df
         
         # 3. Set Up Dataset and Colormap
         dataset: cbas.Dataset = gui_state.proj.datasets[name]
@@ -244,7 +246,7 @@ def start_labeling(name: str, video_to_open: str = None, preloaded_instances: li
     Returns True immediately to unblock the JavaScript UI.
     """
     try:
-        eel.spawn(_start_labeling_worker, name, video_to_open, preloaded_instances)
+        eel.spawn(_start_labeling_worker, name, video_to_open, preloaded_instances, None)
         print(f"Spawned labeling worker for dataset '{name}'.")
         return True
     except Exception as e:
@@ -283,9 +285,9 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
         if not csv_path or not os.path.exists(csv_path):
             raise RuntimeError("Inference failed to produce a CSV output file.")
 
-        preloaded_instances = dataset.predictions_to_instances(csv_path, model_obj.name)
+        preloaded_instances, probability_df = dataset.predictions_to_instances_with_confidence(csv_path, model_obj.name)
         
-        eel.spawn(_start_labeling_worker, dataset_name, video_path_to_label, preloaded_instances)
+        eel.spawn(_start_labeling_worker, dataset_name, video_path_to_label, preloaded_instances, probability_df)
         
         print(f"Spawned pre-labeling worker for video '{os.path.basename(video_path_to_label)}'.")
         return True
@@ -371,10 +373,15 @@ def next_frame(shift: int):
 def jump_to_instance(direction: int):
     """Finds the next/previous instance and jumps the playhead to its start frame."""
     if not gui_state.label_session_buffer:
-        eel.highlightBehaviorRow(None)(); return
+        eel.highlightBehaviorRow(None)()
+        eel.updateConfidenceBadge(None, None)() # Clear badge if no instances
+        return
 
     sorted_instances = sorted(enumerate(gui_state.label_session_buffer), key=lambda item: item[1]['start'])
-    if not sorted_instances: eel.highlightBehaviorRow(None)(); return
+    if not sorted_instances:
+        eel.highlightBehaviorRow(None)()
+        eel.updateConfidenceBadge(None, None)() # Clear badge
+        return
 
     current_frame = gui_state.label_index
     target_item = None
@@ -391,10 +398,15 @@ def jump_to_instance(direction: int):
         gui_state.label_index = instance_data['start']
         gui_state.selected_instance_index = original_index
         
+        # Call the new JS function to display the confidence badge
+        confidence = instance_data.get('confidence') # Will be None for human-added labels
+        eel.updateConfidenceBadge(instance_data['label'], confidence)()
+
         eel.highlightBehaviorRow(instance_data['label'])()
         render_image()
     else:
         eel.highlightBehaviorRow(None)()
+        eel.updateConfidenceBadge(None, None)() # Clear badge if no target found
 
 
 def add_instance_to_buffer():
@@ -449,8 +461,10 @@ def label_frame(value: int):
         elif gui_state.label_type == -1: # Start new labeling
             gui_state.label_type, gui_state.label_start = value, gui_state.label_index
             gui_state.selected_instance_index = -1
+            eel.updateConfidenceBadge(None, None)()
         else: # Switch active label type
             gui_state.label_type, gui_state.label_start = value, gui_state.label_index
+            eel.updateConfidenceBadge(None, None)()
             
     render_image()
 
@@ -470,6 +484,7 @@ def delete_instance_from_buffer():
         if removed_inst in gui_state.label_history:
             gui_state.label_history.remove(removed_inst)
         gui_state.selected_instance_index = -1
+        eel.updateConfidenceBadge(None, None)()
         render_image(); update_counts()
 
 
@@ -604,7 +619,17 @@ def fill_colors(canvas_img: np.ndarray) -> np.ndarray:
             end_px = int(timeline_w * (inst.get("end", 0) + 1) / total_frames)
 
             if start_px < end_px:
-                cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
+                # Confidence rendering logic
+                confidence = inst.get('confidence', 1.0) # Default to 1.0 (solid) if not present
+                # Create a semi-transparent overlay and a solid bar
+                overlay = canvas_img.copy()
+                cv2.rectangle(overlay, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, -1)
+                # Blend the overlay with the original canvas based on confidence
+                cv2.addWeighted(overlay, confidence, canvas_img, 1 - confidence, 0, canvas_img)
+
+                # Always draw a solid border so even low-confidence regions are visible
+                cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), bgr_color, 1)
+
                 if i == gui_state.selected_instance_index:
                     cv2.rectangle(canvas_img, (start_px, timeline_y), (end_px, timeline_y + timeline_h - 1), (255, 255, 255), 3)
         except (ValueError, IndexError):

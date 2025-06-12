@@ -166,7 +166,7 @@ function buildLabelingUI(behaviors, colors) {
     if (!controlsContainer) return;
 
     let controlsHTML = `<div class="card bg-dark text-light h-100"><div class="card-header"><h5></h5></div><ul class="list-group list-group-flush">`;
-    controlsHTML += `<li class="list-group-item bg-dark text-light d-flex justify-content-between"><strong>Behavior</strong><span><strong>Key</strong></span><span><strong>Count</strong></span></li>`;
+    controlsHTML += `<li class="list-group-item bg-dark text-light d-flex justify-content-between"><strong>Behavior</strong><span><strong>Confidence</strong></span><span><strong>Key</strong></span><span><strong>Count</strong></span></li>`;
 
     if (behaviors && colors && behaviors.length === colors.length) {
         behaviors.forEach((behaviorName, index) => {
@@ -175,8 +175,10 @@ function buildLabelingUI(behaviors, colors) {
             const textColor = getTextColorForBg(bgColor);
             controlsHTML += `
                 <li class="list-group-item bg-dark text-light d-flex justify-content-between align-items-center" 
+                    id="behavior-row-${behaviorName.replace(/[\W_]+/g, '-')}"
                     onclick="eel.label_frame(${index})()" style="cursor: pointer;" title="Click or press '${key}' to label '${behaviorName}'">
-                    <span style="flex-basis: 50%;">${behaviorName}</span>
+                    <span style="flex-basis: 40%;">${behaviorName}</span>
+                    <span class="confidence-badge-placeholder" style="flex-basis: 20%;"></span> 
                     <span class="badge rounded-pill" style="flex-basis: 15%; background-color: ${bgColor}; color: ${textColor};">${key}</span>
                     <span id="controls-${behaviorName}-count" class="badge bg-secondary rounded-pill" style="flex-basis: 25%;">0 / 0</span>
                 </li>`;
@@ -267,6 +269,33 @@ function highlightBehaviorRow(behaviorNameToHighlight) {
         if (targetSpan) {
             targetSpan.closest('.list-group-item')?.classList.add('highlight-selected');
         }
+    }
+}
+
+eel.expose(updateConfidenceBadge);
+function updateConfidenceBadge(behaviorName, confidence) {
+    // First, clear all existing badges
+    document.querySelectorAll('.confidence-badge-placeholder').forEach(el => el.innerHTML = '');
+
+    if (behaviorName && confidence !== null) {
+        const rowId = `behavior-row-${behaviorName.replace(/[\W_]+/g, '-')}`;
+        const row = document.getElementById(rowId);
+        if (!row) return;
+
+        const placeholder = row.querySelector('.confidence-badge-placeholder');
+        if (!placeholder) return;
+
+        let badgeClass = 'bg-secondary';
+        if (confidence >= 0.9) {
+            badgeClass = 'bg-success'; // High confidence
+        } else if (confidence >= 0.7) {
+            badgeClass = 'bg-warning text-dark'; // Medium confidence
+        } else {
+            badgeClass = 'bg-danger'; // Low confidence
+        }
+
+        const confidencePercent = (confidence * 100).toFixed(0);
+        placeholder.innerHTML = `<span class="badge ${badgeClass}">${confidencePercent}%</span>`;
     }
 }
 
