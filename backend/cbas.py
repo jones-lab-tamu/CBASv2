@@ -62,7 +62,8 @@ class InvalidProject(Exception):
 
 def encode_file(encoder: nn.Module, path: str) -> str | None:
     """
-    Extracts DINOv2 embeddings from a video file and saves them to an HDF5 file.
+    Extracts DINOv2 embeddings from a video file in chunks to conserve memory
+    and saves them to a resizable HDF5 file.
 
     Args:
         encoder (nn.Module): The pre-loaded DinoEncoder model.
@@ -72,30 +73,61 @@ def encode_file(encoder: nn.Module, path: str) -> str | None:
         str | None: The path to the created HDF5 file, or None if encoding failed.
     """
     try:
+        # Use decord for efficient, hardware-accelerated video reading
         reader = decord.VideoReader(path, ctx=decord.cpu(0))
+        video_len = len(reader)
     except Exception as e:
         print(f"Error reading video {path} with decord: {e}")
         return None
 
-    frames_np = reader.get_batch(range(len(reader))).asnumpy()
-    if frames_np.size == 0:
-        print(f"Warning: Video {path} contains no frames.")
+    if video_len == 0:
+        print(f"Warning: Video {path} contains no frames. Skipping.")
         return None
-    
-    # Use green channel for B/W video, normalize, and set precision
-    frames = torch.from_numpy(frames_np[:, :, :, 1] / 255).half()
-
-    batch_size = 256
-    embeddings = []
-    for i in range(0, len(frames), batch_size):
-        batch = frames[i: i + batch_size]
-        with torch.no_grad(), torch.amp.autocast(device_type=encoder.device.type if encoder.device.type != 'mps' else 'cpu'):
-            out = encoder(batch.unsqueeze(1).to(encoder.device))
-        embeddings.extend(out.squeeze(1).cpu())
 
     out_file_path = os.path.splitext(path)[0] + "_cls.h5"
-    with h5py.File(out_file_path, "w") as file:
-        file.create_dataset("cls", data=torch.stack(embeddings).numpy())
+    
+    # Define a reasonable batch size for processing
+    # 512 is a good starting point, adjust based on VRAM if needed
+    CHUNK_SIZE = 512  
+
+    # Create the HDF5 file and an infinitely resizable dataset
+    with h5py.File(out_file_path, "w") as h5f:
+        # Create dataset with initial shape, but allow for unlimited growth on the first axis
+        dset = h5f.create_dataset(
+            "cls", 
+            (0, 768),  # Initial shape (0 frames, 768 features)
+            maxshape=(None, 768), # (unlimited frames, 768 features)
+            dtype='f4' # Use 32-bit float for compatibility
+        )
+
+        # Loop through the video in chunks
+        for i in range(0, video_len, CHUNK_SIZE):
+            # 1. Read a chunk of frames from the video
+            end_index = min(i + CHUNK_SIZE, video_len)
+            frames_np = reader.get_batch(range(i, end_index)).asnumpy()
+
+            # 2. Pre-process the frames
+            # Use green channel for B/W video, normalize to [0,1], set precision
+            frames_tensor = torch.from_numpy(frames_np[:, :, :, 1] / 255.0).float()
+            
+            # 3. Get embeddings from the encoder
+            # The .half() precision is now handled inside the amp autocast context for safety
+            with torch.no_grad(), torch.amp.autocast(device_type=encoder.device.type if encoder.device.type != 'mps' else 'cpu'):
+                embeddings_batch = encoder(frames_tensor.unsqueeze(1).to(encoder.device))
+
+            # Squeeze out the extra dimension and move to CPU
+            embeddings_out = embeddings_batch.squeeze(1).cpu().numpy()
+
+            # 4. Append the results to the HDF5 dataset
+            # Resize the dataset to accommodate the new chunk
+            dset.resize(dset.shape[0] + len(embeddings_out), axis=0)
+            # Write the new data into the newly created space
+            dset[-len(embeddings_out):] = embeddings_out
+            
+            # Optional: Print progress to the console
+            print(f"  - Encoded frames {i} to {end_index} of {video_len} for {os.path.basename(path)}")
+
+    print(f"Successfully encoded {os.path.basename(path)} to {os.path.basename(out_file_path)}")
     return out_file_path
 
 

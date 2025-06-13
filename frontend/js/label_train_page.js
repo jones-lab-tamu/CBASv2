@@ -89,6 +89,29 @@ function showManageDatasetModal(datasetName) {
 // EEL-EXPOSED FUNCTIONS (Called FROM Python)
 // =================================================================
 
+/**
+ * Called by the Python backend after the background import task is complete.
+ * @param {boolean} success - Whether the import succeeded.
+ * @param {string} message - A success or error message.
+ */
+eel.expose(notify_import_complete);
+function notify_import_complete(success, message) {
+    // Always hide the spinner
+    document.getElementById('cover-spin').style.visibility = 'hidden';
+
+    if (success) {
+        console.log("Import complete, refreshing dataset list.");
+        // Refresh the UI to show the new recording session
+        loadInitialDatasetCards();
+        // Optional: Show a temporary success "toast" notification instead of an alert.
+        // For now, an alert is simple and effective.
+        alert(message);
+    } else {
+        // Show a detailed error message from the backend
+        showErrorOnLabelTrainPage(message);
+    }
+}
+
 /** Shows the general error modal with a custom message. */
 eel.expose(showErrorOnLabelTrainPage);
 function showErrorOnLabelTrainPage(message) {
@@ -707,23 +730,17 @@ async function handleImportSubmit() {
     }
 
     importVideosBsModal?.hide();
-    // General loading spinner
+    // Show the spinner. It will be hidden by the backend notification later.
     document.getElementById('cover-spin').style.visibility = 'visible';
 
     try {
-        // Call the new backend function
-        const success = await eel.import_videos(sessionName, selectedVideoPathsForImport)();
-        if (success) {
-            // IMPORTANT: Reload the dataset cards to reflect the new recordings
-            await loadInitialDatasetCards();
-            // Potentially show a success message
-        } else {
-            showErrorOnLabelTrainPage("Failed to import videos. The session name might already exist or an error occurred on the backend.");
-        }
+        // This will now return almost instantly
+        await eel.import_videos(sessionName, selectedVideoPathsForImport)();
+        // We no longer check for success here, as the real work is in the background.
+        // We also DO NOT hide the spinner here.
     } catch (error) {
-        showErrorOnLabelTrainPage("An error occurred during import: " + error.message);
-    } finally {
-        // Hide spinner
+        // If the task couldn't even be started, hide spinner and show error.
+        showErrorOnLabelTrainPage("An error occurred while trying to start the import task: " + error.message);
         document.getElementById('cover-spin').style.visibility = 'hidden';
     }
 }

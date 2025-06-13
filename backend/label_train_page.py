@@ -30,11 +30,49 @@ from cmap import Colormap
 import eel
 import sys
 import subprocess
+import threading
 
 
 # =================================================================
 # HELPER FUNCTIONS
 # =================================================================
+
+def _video_import_worker(session_name: str, video_paths: list[str]):
+    """
+    (WORKER) Runs in a separate thread to handle slow file copy operations.
+    """
+    try:
+        # This is the same logic that was in import_videos before
+        date_str = datetime.now().strftime("%Y%m%d")
+        date_dir = os.path.join(gui_state.proj.recordings_dir, date_str)
+        session_dir = os.path.join(date_dir, session_name)
+        
+        if os.path.exists(session_dir):
+            raise FileExistsError(f"Session '{session_name}' already exists for today.")
+
+        os.makedirs(session_dir, exist_ok=True)
+        
+        newly_copied_files = []
+        for video_path in video_paths:
+            dest_path = os.path.join(session_dir, os.path.basename(video_path))
+            shutil.copy(video_path, dest_path)
+            newly_copied_files.append(dest_path)
+        
+        if newly_copied_files:
+            with gui_state.encode_lock:
+                new_files_to_queue = [f for f in newly_copied_files if f not in gui_state.encode_tasks]
+                gui_state.encode_tasks.extend(new_files_to_queue)
+        
+        gui_state.proj.reload_recordings()
+
+        # Call the JavaScript function to notify completion
+        eel.notify_import_complete(True, f"Successfully imported {len(video_paths)} video(s) to session '{session_name}'.")
+
+    except Exception as e:
+        print(f"ERROR in video import worker: {e}")
+        traceback.print_exc()
+        # Call JavaScript function to report the specific error
+        eel.notify_import_complete(False, f"Import failed: {e}")
 
 def color_distance(rgb1, rgb2):
     """Calculates the perceived distance between two RGB colors for contrast checking."""
@@ -168,49 +206,27 @@ def get_inferred_videos_for_session(session_dir_rel: str, model_name: str) -> li
 @eel.expose
 def import_videos(session_name: str, video_paths: list[str]) -> bool:
     """
-    Handles the logic for importing user-selected videos into the project.
+    (LAUNCHER) Starts the video import process in a background thread.
+    Returns immediately to keep the UI responsive.
     """
     if not gui_state.proj or not session_name or not video_paths:
         return False
-
-    try:
-        # 1. Create the new session directory structure
-        #    We use today's date to keep the structure consistent with live recordings.
-        date_str = datetime.now().strftime("%Y%m%d")
-        date_dir = os.path.join(gui_state.proj.recordings_dir, date_str)
-        session_dir = os.path.join(date_dir, session_name)
-        
-        if os.path.exists(session_dir):
-            print(f"Error: Session '{session_name}' already exists for today.")
-            return False
-
-        os.makedirs(session_dir, exist_ok=True)
-        print(f"Created import session directory: {session_dir}")
-
-        # 2. Copy files and prepare for encoding
-        newly_copied_files = []
-        for video_path in video_paths:
-            dest_path = os.path.join(session_dir, os.path.basename(video_path))
-            shutil.copy(video_path, dest_path)
-            newly_copied_files.append(dest_path)
-        
-        # 3. CRITICAL: Manually add copied files to the encoding queue
-        if newly_copied_files:
-            with gui_state.encode_lock:
-                # Add only files not already in the queue to be safe
-                new_files_to_queue = [f for f in newly_copied_files if f not in gui_state.encode_tasks]
-                gui_state.encode_tasks.extend(new_files_to_queue)
-            print(f"Queued {len(new_files_to_queue)} imported files for encoding.")
-        
-        # 4. Refresh the project's internal state to recognize the new recording
-        gui_state.proj.reload_recordings()
-
-        return True
-
-    except Exception as e:
-        print(f"An error occurred during video import: {e}")
-        traceback.print_exc()
-        return False
+    
+    print(f"Spawning background thread to import {len(video_paths)} video(s)...")
+    
+    # Create a new thread targeting our worker function
+    import_thread = threading.Thread(
+        target=_video_import_worker,
+        args=(session_name, video_paths)
+    )
+    
+    # Set as a daemon thread so it automatically closes if the main app exits
+    import_thread.daemon = True
+    
+    # Start the thread
+    import_thread.start()
+    
+    return True # Return immediately
 
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: LABELING WORKFLOW & ACTIONS
