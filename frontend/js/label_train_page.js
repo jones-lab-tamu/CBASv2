@@ -30,13 +30,17 @@ const trainModalElement = document.getElementById('trainModal');
 const inferenceModalElement = document.getElementById('inferenceModal');
 const errorModalElement = document.getElementById('errorModal');
 const preLabelModalElement = document.getElementById('preLabelModal');
+const importVideosModalElement = document.getElementById('importVideosModal');
+const manageDatasetModalElement = document.getElementById('manageDatasetModal');
 
 let addDatasetBsModal = addDatasetModalElement ? new bootstrap.Modal(addDatasetModalElement) : null;
 let trainBsModal = trainModalElement ? new bootstrap.Modal(trainModalElement) : null;
 let inferenceBsModal = inferenceModalElement ? new bootstrap.Modal(inferenceModalElement) : null;
 let generalErrorBsModal = errorModalElement ? new bootstrap.Modal(errorModalElement) : null;
 let preLabelBsModal = preLabelModalElement ? new bootstrap.Modal(preLabelModalElement) : null;
-
+let importVideosBsModal = importVideosModalElement ? new bootstrap.Modal(importVideosModalElement) : null;
+let selectedVideoPathsForImport = [];
+let manageDatasetBsModal = manageDatasetModalElement ? new bootstrap.Modal(manageDatasetModalElement) : null;
 
 // =================================================================
 // ROUTING & UTILITY FUNCTIONS
@@ -60,6 +64,25 @@ function getTextColorForBg(hexColor) {
     const b = parseInt(cleanHex.substring(4, 6), 16);
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     return luminance > 0.5 ? '#000000' : '#FFFFFF';
+}
+
+function showManageDatasetModal(datasetName) {
+    if (!manageDatasetBsModal) return;
+
+    // Set the dataset name in the modal title
+    document.getElementById('md-dataset-name').innerText = datasetName;
+
+    // Find the "Reveal" button and attach the correct Eel call to it
+    const revealBtn = document.getElementById('revealFilesButton');
+    if (revealBtn) {
+        // We set the onclick here to ensure it always has the correct datasetName
+        revealBtn.onclick = () => {
+            eel.reveal_dataset_files(datasetName)();
+            manageDatasetBsModal.hide(); // Hide modal after clicking
+        };
+    }
+    
+    manageDatasetBsModal.show();
 }
 
 // =================================================================
@@ -430,58 +453,135 @@ function jumpToInstance(direction) {
 
 /** Opens the 'Labeling Options' modal and populates its fields. */
 async function showPreLabelOptions(datasetName) {
-    if (!preLabelBsModal) return;
-    document.getElementById('pl-dataset-name').innerText = datasetName;
+    // --- 1. Get references to all modal elements ---
     const modelSelect = document.getElementById('pl-model-select');
     const sessionSelect = document.getElementById('pl-session-select');
     const videoSelect = document.getElementById('pl-video-select');
-    const mainButton = document.querySelector('#preLabelModal .btn-outline-success');
-    const scratchButton = document.querySelector('#preLabelModal .btn-outline-primary');
+    const infoDiv = document.getElementById('pl-behavior-match-info');
 
-    // Reset UI to default state for "Pre-Label"
-    document.querySelector('label[for="pl-model-select"]').style.display = 'block';
-    document.querySelector('label[for="pl-session-select"]').style.display = 'block';
-    modelSelect.style.display = 'block';
-    sessionSelect.style.display = 'block';
-    mainButton.innerHTML = '<i class="bi bi-robot me-2"></i>Pre-Label & Correct Selected Video';
-    mainButton.onclick = startPreLabeling;
-    scratchButton.style.display = 'block';
-
+    // --- 2. Reset the modal to its initial state ---
+    document.getElementById('pl-dataset-name').innerText = datasetName;
+    modelSelect.innerHTML = '<option selected disabled>Loading...</option>';
     sessionSelect.innerHTML = '<option selected disabled>First, choose a model...</option>';
     videoSelect.innerHTML = '<option selected disabled>First, choose a session...</option>';
+    infoDiv.innerHTML = '';
+    modelSelect.disabled = true;
     sessionSelect.disabled = true;
     videoSelect.disabled = true;
 
-    // Populate model dropdown
-    modelSelect.innerHTML = '<option selected disabled>Choose a model...</option>';
-    const models = await eel.get_available_models()();
-    if (models) models.forEach(modelName => modelSelect.innerHTML += `<option value="${modelName}">${modelName}</option>`);
+    // --- 3. Fetch all necessary data from Python backend ---
+    const allDatasetConfigs = await eel.load_dataset_configs()();
+    const allModelConfigs = await eel.get_model_configs()();
+    const allModels = await eel.get_available_models()();
+    
+    const targetDatasetConfig = allDatasetConfigs[datasetName];
+    if (!targetDatasetConfig || !targetDatasetConfig.behaviors) {
+        showErrorOnLabelTrainPage(`Could not load behaviors for dataset '${datasetName}'.`);
+        return;
+    }
+    const targetBehaviors = new Set(targetDatasetConfig.behaviors);
 
-    // Add event listeners for chained dropdowns
-    modelSelect.onchange = async function() {
-        sessionSelect.disabled = false;
-        videoSelect.disabled = true; videoSelect.innerHTML = '<option>First, choose a session...</option>';
-        sessionSelect.innerHTML = '<option>Loading sessions...</option>';
-        const sessions = await eel.get_inferred_session_dirs(datasetName, this.value)();
-        sessionSelect.innerHTML = '<option selected disabled>Choose a session...</option>';
-        if (sessions && sessions.length > 0) {
-            sessions.forEach(dir => sessionSelect.innerHTML += `<option value="${dir}">${dir}</option>`);
-        } else {
-            sessionSelect.innerHTML = '<option>No inferred sessions found</option>';
-        }
-    };
-    sessionSelect.onchange = async function() {
-        videoSelect.disabled = false;
-        videoSelect.innerHTML = '<option>Loading videos...</option>';
-        const videos = await eel.get_inferred_videos_for_session(this.value, modelSelect.value)();
-        videoSelect.innerHTML = '<option selected disabled>Choose a video...</option>';
-        if (videos && videos.length > 0) {
-            videos.forEach(v => videoSelect.innerHTML += `<option value="${v[0]}">${v[1]}</option>`);
-        } else {
-            videoSelect.innerHTML = '<option>No videos found</option>';
-        }
-    };
+    // --- 4. Populate the first dropdown with compatible models ---
+    let compatibleModels = [];
+    if (allModels && allModelConfigs) {
+        allModels.forEach(modelName => {
+            const modelConfig = allModelConfigs[modelName];
+            if (modelConfig && modelConfig.behaviors) {
+                const modelBehaviors = new Set(modelConfig.behaviors);
+                if ([...targetBehaviors].some(b => modelBehaviors.has(b))) {
+                    compatibleModels.push(modelName);
+                }
+            }
+        });
+    }
+
+    // --- 5. Update the UI based on whether compatible models were found ---
+    if (compatibleModels.length > 0) {
+        modelSelect.innerHTML = '<option selected disabled>Choose a model...</option>';
+        compatibleModels.forEach(name => modelSelect.innerHTML += `<option value="${name}">${name}</option>`);
+        modelSelect.disabled = false;
+    } else {
+        modelSelect.innerHTML = '<option selected disabled>No compatible models found</option>';
+    }
+
+    // --- 6. Show the modal ---
     preLabelBsModal.show();
+}
+
+// --- Event listeners need to be attached ONCE when the page loads ---
+async function onModelSelectChange(event) {
+    const modelName = event.target.value;
+    const datasetName = document.getElementById('pl-dataset-name').innerText;
+    
+    // --- UI Nudging ---
+    const infoDiv = document.getElementById('pl-behavior-match-info');
+    infoDiv.innerHTML = ''; // Clear previous
+    const allModelConfigs = await eel.get_model_configs()(); // Re-fetch or pass down
+    const allDatasetConfigs = await eel.load_dataset_configs()();
+    const targetBehaviors = new Set(allDatasetConfigs[datasetName].behaviors);
+    const modelConfig = allModelConfigs[modelName];
+
+    if (modelConfig && modelConfig.behaviors) {
+        const modelBehaviors = new Set(modelConfig.behaviors);
+        const matching = [...targetBehaviors].filter(b => modelBehaviors.has(b)).join(', ');
+        const nonMatching = [...targetBehaviors].filter(b => !modelBehaviors.has(b)).join(', ');
+        infoDiv.innerHTML = `Will pre-label for: <strong>${matching}</strong>.`;
+        if (nonMatching) {
+            infoDiv.innerHTML += `<br><span class="text-warning">Will ignore: ${nonMatching}</span>`;
+        }
+    }
+
+    // --- Populate Session Dropdown ---
+    const sessionSelect = document.getElementById('pl-session-select');
+    sessionSelect.disabled = false;
+    sessionSelect.innerHTML = '<option>Loading sessions...</option>';
+    const sessions = await eel.get_inferred_session_dirs(datasetName, modelName)();
+    
+    sessionSelect.innerHTML = '<option selected disabled>Choose a session...</option>';
+    if (sessions && sessions.length > 0) {
+        sessions.forEach(dir => sessionSelect.innerHTML += `<option value="${dir}">${dir}</option>`);
+    } else {
+        sessionSelect.innerHTML = '<option selected disabled>No inferred sessions</option>';
+        sessionSelect.disabled = true;
+    }
+}
+
+async function onSessionSelectChange(event) {
+    const sessionDir = event.target.value;
+    const modelName = document.getElementById('pl-model-select').value;
+    const videoSelect = document.getElementById('pl-video-select');
+
+    videoSelect.disabled = false;
+    videoSelect.innerHTML = '<option>Loading videos...</option>';
+    const videos = await eel.get_inferred_videos_for_session(sessionDir, modelName)();
+
+    videoSelect.innerHTML = '<option selected disabled>Choose a video...</option>';
+    if (videos && videos.length > 0) {
+        videos.forEach(v => videoSelect.innerHTML += `<option value="${v[0]}">${v[1]}</option>`);
+    } else {
+        videoSelect.innerHTML = '<option selected disabled>No videos found</option>';
+        videoSelect.disabled = true;
+    }
+}
+
+/** Triggers a backend refresh of all project data and re-renders the dataset cards. */
+async function refreshAllDatasets() {
+    console.log("Refreshing datasets from disk...");
+    const spinner = document.getElementById('cover-spin');
+    if (spinner) spinner.style.visibility = 'visible';
+
+    try {
+        // Call a new, simple backend function to trigger a project-wide reload
+        await eel.reload_project_data()();
+        
+        // Now, simply call the existing function to redraw the UI with the new data
+        await loadInitialDatasetCards();
+    } catch (error) {
+        console.error("Failed to refresh datasets:", error);
+        showErrorOnLabelTrainPage("An error occurred while trying to refresh the datasets.");
+    } finally {
+        if (spinner) spinner.style.visibility = 'hidden';
+    }
 }
 
 /** Modifies the 'Labeling Options' modal for the "Start From Scratch" workflow. */
@@ -570,6 +670,63 @@ async function prepareAndShowLabelModal(datasetName, videoToOpen) {
 // =================================================================
 // DATASET & MODEL MANAGEMENT FUNCTIONS
 // =================================================================
+
+/** Starts the import process */
+async function showImportVideosDialog() {
+    if (!window.electronAPI) {
+        showErrorOnLabelTrainPage("The file system API is not available.");
+        return;
+    }
+    try {
+        // Use 'invoke' to get the file paths back directly from the main process
+        const filePaths = await window.electronAPI.invoke('show-open-video-dialog');
+
+        if (filePaths && filePaths.length > 0) {
+            selectedVideoPathsForImport = filePaths;
+            document.getElementById('import-file-count').textContent = filePaths.length;
+            document.getElementById('import-session-name').value = ''; // Clear previous
+            importVideosBsModal?.show();
+        } else {
+            console.log("User cancelled video selection.");
+        }
+    } catch (err) {
+        showErrorOnLabelTrainPage("Could not open file dialog: " + err.message);
+    }
+}
+
+/** Handles the modal submission */
+async function handleImportSubmit() {
+    const sessionName = document.getElementById('import-session-name').value;
+    if (!sessionName.trim()) {
+        showErrorOnLabelTrainPage("Session Name cannot be empty.");
+        return;
+    }
+    if (selectedVideoPathsForImport.length === 0) {
+        showErrorOnLabelTrainPage("No video files were selected.");
+        return;
+    }
+
+    importVideosBsModal?.hide();
+    // General loading spinner
+    document.getElementById('cover-spin').style.visibility = 'visible';
+
+    try {
+        // Call the new backend function
+        const success = await eel.import_videos(sessionName, selectedVideoPathsForImport)();
+        if (success) {
+            // IMPORTANT: Reload the dataset cards to reflect the new recordings
+            await loadInitialDatasetCards();
+            // Potentially show a success message
+        } else {
+            showErrorOnLabelTrainPage("Failed to import videos. The session name might already exist or an error occurred on the backend.");
+        }
+    } catch (error) {
+        showErrorOnLabelTrainPage("An error occurred during import: " + error.message);
+    } finally {
+        // Hide spinner
+        document.getElementById('cover-spin').style.visibility = 'hidden';
+    }
+}
 
 /** Populates and shows the "Add Dataset" modal. */
 async function showAddDatasetModal() {
@@ -721,40 +878,108 @@ async function loadInitialDatasetCards() {
         container.className = 'row g-3'; // Add gutter spacing for cards
         let htmlContent = '';
 
+        // --- Renders the card for the default JonesLabModel ---
         if (await eel.model_exists("JonesLabModel")()) {
-            htmlContent += `<div class="col-md-6 col-lg-4"><div class="card shadow h-100"><div class="card-header bg-dark text-white"><h5 class="card-title mb-0">JonesLabModel <span class="badge bg-info">Default</span></h5></div><div class="card-body d-flex flex-column"><p class="card-text small text-muted">Pre-trained model for general inference.</p></div><div class="card-footer text-end"><button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('JonesLabModel')">Infer</button></div></div></div>`;
+            htmlContent += `
+                <div class="col-md-6 col-lg-4">
+                    <div class="card shadow h-100">
+                        <div class="card-header bg-dark text-white">
+                            <h5 class="card-title mb-0">JonesLabModel <span class="badge bg-info">Default</span></h5>
+                        </div>
+                        <div class="card-body d-flex flex-column">
+                            <p class="card-text small text-muted">Pre-trained model for general inference.</p>
+                        </div>
+                        <div class="card-footer text-end">
+                            <button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('JonesLabModel')">Infer</button>
+                        </div>
+                    </div>
+                </div>`;
         }
 
+        // --- Renders cards for all user-created datasets ---
         if (datasets) {
             for (const datasetName in datasets) {
+                // Skip rendering a dataset card if it's the default model, as it's handled above
                 if (datasetName === "JonesLabModel") continue;
+                
                 const config = datasets[datasetName];
                 const behaviors = config.behaviors || [];
                 const metrics = config.metrics || {};
                 const modelExists = !!config.model;
                 const metricHeaders = ['Train #', 'Test #', 'Precision', 'Recall', 'F1 Score'];
-                htmlContent += `<div class="col-md-6 col-lg-4"><div class="card shadow h-100"><div class="card-header bg-dark text-white"><h5 class="card-title mb-0">${datasetName}</h5></div><div class="card-body" style="font-size: 0.85rem;">`;
+
+                htmlContent += `
+                    <div class="col-md-6 col-lg-4">
+                        <div class="card shadow h-100">
+                            <div class="card-header bg-dark text-white">
+                                <h5 class="card-title mb-0">${datasetName}</h5>
+                            </div>
+                            <div class="card-body" style="font-size: 0.85rem;">`;
+
                 if (behaviors.length > 0) {
-                    htmlContent += `<div class="table-responsive"><table class="table table-sm table-hover small"><thead><tr><th>Behavior</th>${metricHeaders.map(h => `<th class="text-center">${h}</th>`).join('')}</tr></thead><tbody>`;
+                    htmlContent += `
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover small">
+                                <thead>
+                                    <tr>
+                                        <th>Behavior</th>
+                                        ${metricHeaders.map(h => `<th class="text-center">${h}</th>`).join('')}
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+
                     behaviors.forEach(behaviorName => {
                         const bMetrics = metrics[behaviorName] || {};
                         const idSuffixes = ['train-count', 'test-count', 'precision', 'recall', 'fscore'];
-                        htmlContent += `<tr><td>${behaviorName}</td>${metricHeaders.map((mh, i) => `<td class="text-center" id="${datasetName}-${behaviorName}-${idSuffixes[i]}">${bMetrics[mh] ?? 'N/A'}</td>`).join('')}</tr>`;
+                        htmlContent += `
+                            <tr>
+                                <td>${behaviorName}</td>
+                                ${metricHeaders.map((mh, i) => `<td class="text-center" id="${datasetName}-${behaviorName}-${idSuffixes[i]}">${bMetrics[mh] ?? 'N/A'}</td>`).join('')}
+                            </tr>`;
                     });
-                    htmlContent += `</tbody></table></div>`;
+
+                    htmlContent += `
+                                </tbody>
+                            </table>
+                        </div>`;
                 } else {
                     htmlContent += `<p class="text-muted">No behaviors defined yet.</p>`;
                 }
-                htmlContent += `<div class="progress mt-2" id="progress-container-${datasetName}" style="height: 20px; display: none;"><div class="progress-bar progress-bar-striped progress-bar-animated" id="progress-bar-${datasetName}" role="progressbar" style="width: 0%;"></div></div>`;
-                htmlContent += `<div id="dataset-status-${datasetName}" class="mt-2 small text-info"></div>`;
-                htmlContent += `</div><div class="card-footer text-end"><button class="btn btn-sm btn-outline-primary me-1" type="button" onclick="showPreLabelOptions('${datasetName}')">Label</button><button class="btn btn-sm btn-outline-success me-1" type="button" onclick="showTrainModal('${datasetName}')">Train</button>`;
+
+                // Progress bar and status text
+                htmlContent += `
+                    <div class="progress mt-2" id="progress-container-${datasetName}" style="height: 20px; display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" id="progress-bar-${datasetName}" role="progressbar" style="width: 0%;"></div>
+                    </div>
+                    <div id="dataset-status-${datasetName}" class="mt-2 small text-info"></div>
+                </div>`;
+
+                // Card Footer with all buttons
+                htmlContent += `
+                    <div class="card-footer d-flex justify-content-end align-items-center">
+                        <!-- NEW "Manage" button, aligned to the left -->
+                        <button class="btn btn-sm btn-outline-secondary me-auto" type="button" onclick="showManageDatasetModal('${datasetName}')" title="Manage dataset files">
+                            <i class="bi bi-folder2-open"></i> Manage
+                        </button>
+                        
+                        <!-- Existing action buttons, aligned to the right -->
+                        <button class="btn btn-sm btn-outline-primary me-1" type="button" onclick="showPreLabelOptions('${datasetName}')">Label</button>
+                        <button class="btn btn-sm btn-outline-success me-1" type="button" onclick="showTrainModal('${datasetName}')">Train</button>`;
+                
                 if (modelExists) {
                     htmlContent += `<button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('${datasetName}')">Infer</button>`;
                 }
-                htmlContent += `</div></div></div>`;
+
+                htmlContent += `
+                            </div>
+                        </div>
+                    </div>`;
             }
         }
+
+        // Final check and render
         container.innerHTML = htmlContent || "<p class='text-light'>No datasets found. Click '+' to create one.</p>";
+
     } catch (error) {
         console.error("Error loading initial dataset configs:", error);
     }
@@ -917,6 +1142,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('createDatasetButton')?.addEventListener('click', submitCreateDataset);
     document.getElementById('trainModelButton')?.addEventListener('click', submitTrainModel);
     document.getElementById('startClassificationButton')?.addEventListener('click', submitStartClassification);
+    document.getElementById('modal-import-button-final')?.addEventListener('click', handleImportSubmit);
+	document.getElementById('pl-model-select')?.addEventListener('change', onModelSelectChange);
+    document.getElementById('pl-session-select')?.addEventListener('change', onSessionSelectChange);
 
     const confidenceSlider = document.getElementById('confidence-slider');
     const sliderValueDisplay = document.getElementById('slider-value-display');

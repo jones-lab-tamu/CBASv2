@@ -365,9 +365,25 @@ class VideoFileWatcher(FileSystemEventHandler):
 
         video_path = event.src_path
         print(f"[VideoFileWatcher] Detected new file: {video_path}")
+
+        # =========================================================================
+        # NEW LOGIC TO PREVENT WATCHER FROM ACTING ON IMPORTS
+        # =========================================================================
+        # Check if the camera name from the file path is in the active recording list.
+        # If it's not an active stream, it's a manual copy/import, so we do nothing.
+        try:
+            # e.g., "C:\...\Mouse 1_00000.mp4" -> "Mouse 1"
+            camera_name = os.path.basename(video_path).rsplit('_', 1)[0]
+            # gui_state.proj might not exist on initial startup, so check it.
+            if not gui_state.proj or camera_name not in gui_state.proj.active_recordings:
+                print(f"[VideoFileWatcher] Ignoring file '{os.path.basename(video_path)}' as it's not from an active recording stream.")
+                return
+        except (IndexError, AttributeError):
+             # If parsing fails or proj isn't loaded, safely exit.
+            return
+        # =========================================================================
         
-        # This logic encodes the *previous* segment when a new one is created,
-        # ensuring the previous segment is fully written to disk before processing.
+        # This logic now ONLY runs for active, live recordings.
         dirname, basename = os.path.split(video_path)
         try:
             name_part, num_str = os.path.splitext(basename)[0].rsplit('_', 1)

@@ -92,7 +92,7 @@ if (!gotTheLock) {
 	  }
 	});
     
-    // IPC for file dialogs remains the same
+    // IPC for file dialogs
     ipcMain.on('open-file-dialog', (event) => {
       dialog.showOpenDialog(appWindow, { properties: ['openDirectory'] })
         .then(result => {
@@ -118,6 +118,18 @@ if (!gotTheLock) {
 	  // Return the first selected path, or null if cancelled
 	  return filePaths && filePaths.length > 0 ? filePaths[0] : null;
 	});
+
+    ipcMain.handle('show-open-video-dialog', async () => {
+        const { filePaths } = await dialog.showOpenDialog(appWindow, {
+            title: 'Select Video Files to Import',
+            properties: ['openFile', 'multiSelections'], // Allow multiple files
+            filters: [
+                { name: 'Videos', extensions: ['mp4'] }
+            ]
+        });
+        return filePaths; // Return the array of selected paths
+    });
+
 
     appWindow.on('closed', () => { appWindow = null; });
   }

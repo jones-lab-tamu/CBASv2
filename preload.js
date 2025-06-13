@@ -10,8 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
   invoke: (channel, data) => {
-    // Replace 'show-save-dialog' with our new, specific channel name
-    let validChannels = ['show-folder-dialog']; 
+    let validChannels = ['show-folder-dialog', 'show-open-video-dialog'];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, data);
     }

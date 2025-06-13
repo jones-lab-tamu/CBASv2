@@ -616,7 +616,19 @@ class Project:
         self._load_recordings()
         self._load_models()
         self._load_datasets()
-
+        
+    def reload(self):
+        """
+        Reloads all project components (datasets, models, etc.) from disk.
+        """
+        print("Project data reload requested. Re-scanning all directories...")
+        # Simply re-run the same loading logic from the constructor
+        self._load_cameras()
+        self._load_recordings()
+        self._load_models()
+        self._load_datasets()
+        print("Project data reloaded successfully.")
+  
     def _load_cameras(self):
         """Loads all camera configurations from the 'cameras' directory."""
         self.cameras = {}
@@ -642,6 +654,14 @@ class Project:
                     self.recordings[day_dir.name][rec.name] = rec
                 except Exception as e:
                     print(f"Error loading recording {session_dir.path}: {e}")
+
+    def reload_recordings(self):
+        """
+        Re-scans the recordings directory and updates the project's internal state.
+        This is useful after manual file operations like importing.
+        """
+        print("Reloading recording sessions from disk...")
+        self._load_recordings()
 
     def _load_models(self):
         """

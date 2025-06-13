@@ -17,6 +17,8 @@ import cv2
 import numpy as np
 import torch
 import pandas as pd
+import shutil
+from datetime import datetime
 
 # Project-specific imports
 import cbas
@@ -26,6 +28,8 @@ import workthreads
 from cmap import Colormap
 
 import eel
+import sys
+import subprocess
 
 
 # =================================================================
@@ -161,10 +165,64 @@ def get_inferred_videos_for_session(session_dir_rel: str, model_name: str) -> li
                 
     return sorted(ready_videos, key=lambda x: x[1])
 
+@eel.expose
+def import_videos(session_name: str, video_paths: list[str]) -> bool:
+    """
+    Handles the logic for importing user-selected videos into the project.
+    """
+    if not gui_state.proj or not session_name or not video_paths:
+        return False
+
+    try:
+        # 1. Create the new session directory structure
+        #    We use today's date to keep the structure consistent with live recordings.
+        date_str = datetime.now().strftime("%Y%m%d")
+        date_dir = os.path.join(gui_state.proj.recordings_dir, date_str)
+        session_dir = os.path.join(date_dir, session_name)
+        
+        if os.path.exists(session_dir):
+            print(f"Error: Session '{session_name}' already exists for today.")
+            return False
+
+        os.makedirs(session_dir, exist_ok=True)
+        print(f"Created import session directory: {session_dir}")
+
+        # 2. Copy files and prepare for encoding
+        newly_copied_files = []
+        for video_path in video_paths:
+            dest_path = os.path.join(session_dir, os.path.basename(video_path))
+            shutil.copy(video_path, dest_path)
+            newly_copied_files.append(dest_path)
+        
+        # 3. CRITICAL: Manually add copied files to the encoding queue
+        if newly_copied_files:
+            with gui_state.encode_lock:
+                # Add only files not already in the queue to be safe
+                new_files_to_queue = [f for f in newly_copied_files if f not in gui_state.encode_tasks]
+                gui_state.encode_tasks.extend(new_files_to_queue)
+            print(f"Queued {len(new_files_to_queue)} imported files for encoding.")
+        
+        # 4. Refresh the project's internal state to recognize the new recording
+        gui_state.proj.reload_recordings()
+
+        return True
+
+    except Exception as e:
+        print(f"An error occurred during video import: {e}")
+        traceback.print_exc()
+        return False
 
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: LABELING WORKFLOW & ACTIONS
 # =================================================================
+
+@eel.expose
+def get_model_configs() -> dict:
+    """Loads configurations for all available models."""
+    if not gui_state.proj:
+        return {}
+    # Correctly gets the config from each cbas.Model object
+    return {name: model.config for name, model in gui_state.proj.models.items()}
 
 def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_instances: list = None, probability_df: pd.DataFrame = None):
     """
@@ -273,14 +331,32 @@ def start_labeling(name: str, video_to_open: str = None, preloaded_instances: li
 @eel.expose
 def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_to_label: str) -> bool:
     """
-    (LAUNCHER) Runs a quick inference step and then spawns the labeling worker.
+    Runs a quick inference step and then spawns the labeling worker.
+    Now includes a behavior compatibility check.
     """
     try:
         print(f"Request to pre-label '{os.path.basename(video_path_to_label)}' with model '{model_name}'...")
         if gui_state.proj is None: raise ValueError("Project not loaded")
+        
         dataset = gui_state.proj.datasets.get(dataset_name)
         model_obj = gui_state.proj.models.get(model_name)
         if not dataset or not model_obj: raise ValueError("Dataset or Model not found.")
+
+        # =================================================================
+        # BEHAVIOR COMPATIBILITY CHECK
+        # =================================================================
+        target_behaviors = set(dataset.config.get("behaviors", []))
+        model_behaviors = set(model_obj.config.get("behaviors", []))
+
+        if not target_behaviors.intersection(model_behaviors):
+            error_message = (
+                f"Model '{model_name}' and Dataset '{dataset_name}' have no behaviors in common. "
+                "Pre-labeling cannot proceed."
+            )
+            print(f"ERROR: {error_message}")
+            eel.showErrorOnLabelTrainPage(error_message)() # Send clear error to UI
+            return False # Important: return False to signal failure
+        # =================================================================
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         torch_model = classifier_head.classifier(
@@ -699,6 +775,47 @@ def cancel_commit_stage():
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: DATASET & MODEL MANAGEMENT
 # =================================================================
+
+@eel.expose
+def reload_project_data():
+    """
+    Triggers a full reload of the current project's data from the disk.
+    """
+    if gui_state.proj:
+        try:
+            gui_state.proj.reload()
+            return True
+        except Exception as e:
+            print(f"Error during project data reload: {e}")
+            return False
+    return False
+
+@eel.expose
+def reveal_dataset_files(dataset_name: str):
+    """
+    Opens the specified dataset's directory in the user's native file explorer.
+    """
+    if not gui_state.proj or dataset_name not in gui_state.proj.datasets:
+        print(f"Error: Could not find dataset '{dataset_name}' to reveal.")
+        return
+
+    dataset_path = gui_state.proj.datasets[dataset_name].path
+    print(f"Revealing path for '{dataset_name}': {dataset_path}")
+
+    try:
+        if sys.platform == "win32":
+            # For Windows, os.startfile is the most direct way
+            os.startfile(dataset_path)
+        elif sys.platform == "darwin":
+            # For macOS
+            subprocess.run(["open", dataset_path])
+        else:
+            # For Linux and other UNIX-like systems
+            subprocess.run(["xdg-open", dataset_path])
+    except Exception as e:
+        print(f"Failed to open file explorer for path '{dataset_path}': {e}")
+        # Optionally, send an error back to the UI
+        eel.showErrorOnLabelTrainPage(f"Could not open the folder. Please navigate there manually:\n{dataset_path}")()
 
 @eel.expose
 def create_dataset(name: str, behaviors: list[str], recordings_whitelist: list[str]) -> bool:

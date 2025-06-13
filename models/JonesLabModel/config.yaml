@@ -7,6 +7,6 @@ behaviors:
 - nesting
 - resting
 - grooming
-- exploration
+- exploring
 seq_len: 31
 model: "./models/JonesLabModel/model.pth"
