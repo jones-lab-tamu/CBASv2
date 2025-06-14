@@ -73,19 +73,19 @@
                   <div class="card-body">
 					<!-- Controls Section -->
 					<div class="row mb-3 gy-2">
-					  <div class="col-lg-6 col-xl-3 d-flex align-items-center">
+					  <div class="col-lg-6 col-xl-3 d-flex align-items-center" data-bs-toggle="tooltip" data-bs-placement="top" title="Framerate of the source video">
 						<label for="vs-framerate" class="form-label me-2 mb-0 text-nowrap">Framerate:</label>
 						<input type="number" class="form-control form-control-sm" id="vs-framerate" value="10" step="1" min="1" max="90">
 					  </div>
-					  <div class="col-lg-6 col-xl-3 d-flex align-items-center">
+					  <div class="col-lg-6 col-xl-3 d-flex align-items-center" data-bs-toggle="tooltip" data-bs-placement="top" title="Duration of each bin in the actogram (in minutes)">
 						<label for="vs-binsize" class="form-label me-2 mb-0 text-nowrap">Bin Size (min):</label>
 						<input type="number" class="form-control form-control-sm" id="vs-binsize" value="10" step="1" min="1" max="720">
 					  </div>
-					  <div class="col-lg-6 col-xl-3 d-flex align-items-center">
+					  <div class="col-lg-6 col-xl-3 d-flex align-items-center" data-bs-toggle="tooltip" data-bs-placement="top" title="Hour of the day (0-24) to start the plot">
 						<label for="vs-start" class="form-label me-2 mb-0 text-nowrap">Start Time:</label>
 						<input type="number" class="form-control form-control-sm" id="vs-start" value="0" step="0.01" min="0" max="24">
 					  </div>
-					  <div class="col-lg-6 col-xl-3 d-flex align-items-center">
+					  <div class="col-lg-6 col-xl-3 d-flex align-items-center" data-bs-toggle="tooltip" data-bs-placement="top" title="Confidence threshold for counting a behavior event">
 						<label for="vs-threshold" class="form-label me-2 mb-0 text-nowrap">Threshold (%):</label>
 						<input type="number" class="form-control form-control-sm" id="vs-threshold" value="50" step="1" min="1" max="100">
 					  </div>
@@ -110,7 +110,7 @@
 					
                       <!-- EXPORT BUTTON -->
                       <div class="col-12 d-flex justify-content-end mt-3">
-                        <button id="export-data-btn" class="btn btn-sm btn-outline-info" onclick="exportActogramData()" disabled>
+                        <button id="export-data-btn" class="btn btn-sm btn-outline-info" onclick="exportActogramData()" disabled data-bs-toggle="tooltip" data-bs-placement="top" title="Export binned actogram data to CSV files">
                           <i class="bi bi-download me-1"></i> Export Binned Data
                         </button>
                       </div>
@@ -160,6 +160,15 @@
         <script src="libs/bootstrap-5.3.3/js/bootstrap.bundle.min.js"></script>
         <!-- Custom Page Logic -->
         <script type="text/javascript" src="js/visualize_page.js"></script>
+        <!-- Tooltip Initializer -->
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl)
+            })
+            });
+        </script>
   
     </body>
 </html>

@@ -50,7 +50,7 @@
 		</ul>
       </div>
       <div class="ms-auto">
-        <button id="status-camera-outline" class="btn btn-outline-light" style="color: white;" onclick="showStatusModal()">
+        <button id="status-camera-outline" class="btn btn-outline-light" style="color: white;" onclick="showStatusModal()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="View System Status">
           <i id="status-camera-icon" class="bi bi-camera" style="font-size: 24px; color: white;"></i>
         </button>
       </div>
@@ -194,12 +194,12 @@
   <!-- Bottom Right Buttons -->
 	<div class="fab-container-right">
 	  <!-- Create Button -->
-	  <div class="fab" onclick="showAddCameraModal()">
+	  <div class="fab" onclick="showAddCameraModal()" data-bs-toggle="tooltip" data-bs-placement="left" title="Add New Camera">
 		<i class="bi bi-plus-lg" style="font-size: 50px"></i>
 	  </div>
 
     <!-- Record Button -->
-	  <div class="fab" onclick="startAllCameras()">
+	  <div class="fab" onclick="startAllCameras()" data-bs-toggle="tooltip" data-bs-placement="left" title="Start/Stop All Recordings">
 		<i class="bi bi-camera-video-fill"></i>
 	  </div>
 	</div>
@@ -207,7 +207,7 @@
   <!-- Bottom Left Refresh Button -->
 	<div class="fab-container-left">
 	  <!-- Refresh Button -->
-	  <div class="fab" onclick="loadCameras()">
+	  <div class="fab" onclick="loadCameras()" data-bs-toggle="tooltip" data-bs-placement="right" title="Refresh Camera Thumbnails">
 		<i class="bi bi-arrow-clockwise" style="font-size: 50px"></i>
 	  </div>
 	</div>
@@ -220,6 +220,15 @@
   <script src="libs/bootstrap-5.3.3/js/bootstrap.bundle.min.js"></script>
   <!-- Custom Page Logic -->
   <script type="text/javascript" src="js/record_page.js"></script>
+  <!-- Tooltip Initializer -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+      var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl)
+      })
+    });
+  </script>
 </body>
 
 </html>

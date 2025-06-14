@@ -905,7 +905,7 @@ async function loadInitialDatasetCards() {
                             <p class="card-text small text-muted">Pre-trained model for general inference.</p>
                         </div>
                         <div class="card-footer text-end">
-                            <button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('JonesLabModel')">Infer</button>
+                            <button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('JonesLabModel')" data-bs-toggle="tooltip" data-bs-placement="top" title="Use this model to classify unlabeled videos">Infer</button>
                         </div>
                     </div>
                 </div>`;
@@ -972,17 +972,15 @@ async function loadInitialDatasetCards() {
                 // Card Footer with all buttons
                 htmlContent += `
                     <div class="card-footer d-flex justify-content-end align-items-center">
-                        <!-- NEW "Manage" button, aligned to the left -->
-                        <button class="btn btn-sm btn-outline-secondary me-auto" type="button" onclick="showManageDatasetModal('${datasetName}')" title="Manage dataset files">
+                        <button class="btn btn-sm btn-outline-secondary me-auto" type="button" onclick="showManageDatasetModal('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="View dataset files on disk">
                             <i class="bi bi-folder2-open"></i> Manage
                         </button>
                         
-                        <!-- Existing action buttons, aligned to the right -->
-                        <button class="btn btn-sm btn-outline-primary me-1" type="button" onclick="showPreLabelOptions('${datasetName}')">Label</button>
-                        <button class="btn btn-sm btn-outline-success me-1" type="button" onclick="showTrainModal('${datasetName}')">Train</button>`;
+                        <button class="btn btn-sm btn-outline-primary me-1" type="button" onclick="showPreLabelOptions('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="Label videos for this dataset">Label</button>
+                        <button class="btn btn-sm btn-outline-success me-1" type="button" onclick="showTrainModal('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="Train a new model with this dataset's labels">Train</button>`;
                 
                 if (modelExists) {
-                    htmlContent += `<button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('${datasetName}')">Infer</button>`;
+                    htmlContent += `<button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="Use this dataset's trained model to classify unlabeled videos">Infer</button>`;
                 }
 
                 htmlContent += `
@@ -994,6 +992,12 @@ async function loadInitialDatasetCards() {
 
         // Final check and render
         container.innerHTML = htmlContent || "<p class='text-light'>No datasets found. Click '+' to create one.</p>";
+
+        // IMPORTANT: Re-initialize tooltips after updating the DOM
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
 
     } catch (error) {
         console.error("Error loading initial dataset configs:", error);

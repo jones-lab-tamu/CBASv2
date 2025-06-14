@@ -284,17 +284,17 @@
     </div>
     <div class="fab-container-right">
 	  <!-- Create Dataset button -->
-	  <div class="fab" onclick="showAddDatasetModal()" title="Create New Dataset">
+	  <div class="fab" onclick="showAddDatasetModal()" data-bs-toggle="tooltip" data-bs-placement="left" title="Create New Dataset">
 		<i class="bi bi-plus-lg" style="font-size: 50px;"></i>
 	  </div>
 	  <!-- Import Videos button -->
-	  <div class="fab" onclick="showImportVideosDialog()" title="Import Existing Videos">
+	  <div class="fab" onclick="showImportVideosDialog()" data-bs-toggle="tooltip" data-bs-placement="left" title="Import Existing Videos">
 		<i class="bi bi-box-arrow-in-down" style="font-size: 40px;"></i>
 	  </div>
 	</div>
     <!-- FIX: Move Refresh button container INSIDE the main datasets div -->
     <div class="fab-container-left">
-      <div class="fab" onclick="refreshAllDatasets()" title="Refresh Datasets from Disk">
+      <div class="fab" onclick="refreshAllDatasets()" data-bs-toggle="tooltip" data-bs-placement="right" title="Refresh Datasets from Disk">
         <i class="bi bi-arrow-clockwise" style="font-size: 40px;"></i>
       </div>
     </div>
@@ -311,7 +311,7 @@
             <!-- Current video path is injected here -->
           </div>
           <div class="col-md-3 text-end">
-            <button id="save-labels-btn" class="btn btn-success" onclick="handleCommitClick()">
+            <button id="save-labels-btn" class="btn btn-success" onclick="handleCommitClick()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Save confirmed labels (Ctrl+S)">
 			  <i class="bi bi-save-fill me-2"></i>Commit Corrections
 			</button>
 			<!-- The cancel button also calls its function directly -->
@@ -356,10 +356,10 @@
 
 				<!-- Section 5: Navigation Controls -->
 				<div id="instance-nav-controls" class="mt-2">
-					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(-1)" title="Jump to Previous Instance (Shift+Tab)">
+					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(-1)" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Jump to Previous Instance (Shift+Tab)">
 						<i class="bi bi-skip-backward-fill"></i> Prev Instance
 					</button>
-					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(1)" title="Jump to Next Instance (Tab)">
+					<button class="btn btn-sm btn-outline-light" onclick="jumpToInstance(1)" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Jump to Next Instance (Tab)">
 						Next Instance <i class="bi bi-skip-forward-fill"></i>
 					</button>
 				</div>
@@ -383,7 +383,7 @@
     <!-- The header now contains the confidence filter -->
     <div class="card-header d-flex justify-content-between align-items-center">
       <h5 class="mb-0 text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5>
-      <div id="confidence-filter-container" class="d-flex align-items-center w-50" style="display: none;">
+      <div id="confidence-filter-container" class="d-flex align-items-center w-50" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Filter out high-confidence predictions to focus on mistakes">
         <label for="confidence-slider" class="form-label me-3 mb-0 text-nowrap text-light">Filter Confidence < </label>
         <input type="range" class="form-range" min="0" max="100" step="1" value="100" id="confidence-slider">
         <span id="slider-value-display" class="ms-3 badge bg-info" style="width: 55px;">100%</span>
@@ -423,6 +423,16 @@
 
   <!-- Custom Page Logic -->
   <script type="text/javascript" src="js/label_train_page.js"></script>
+
+  <!-- Tooltip Initializer -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+      var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl)
+      })
+    });
+  </script>
 
   <!-- Spinner -->
   <div id="cover-spin"></div>
