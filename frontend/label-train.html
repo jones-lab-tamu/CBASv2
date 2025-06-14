@@ -292,13 +292,11 @@
 		<i class="bi bi-box-arrow-in-down" style="font-size: 40px;"></i>
 	  </div>
 	</div>
-  </div>
-
-
-  <!-- Refresh button -->
-  <div class="fab-container-left">
-    <div class="fab" onclick="refreshAllDatasets()" title="Refresh Datasets from Disk">
-      <i class="bi bi-arrow-clockwise" style="font-size: 40px;"></i>
+    <!-- FIX: Move Refresh button container INSIDE the main datasets div -->
+    <div class="fab-container-left">
+      <div class="fab" onclick="refreshAllDatasets()" title="Refresh Datasets from Disk">
+        <i class="bi bi-arrow-clockwise" style="font-size: 40px;"></i>
+      </div>
     </div>
   </div>
 
@@ -398,7 +396,7 @@
         <div class="col-md-6">
           <ul class="list-unstyled">
             <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
-            <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame (within instance)</li>
+            <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame</li>
             <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
             <li><kbd>Enter</kbd> : Confirm / Lock / Unlock Instance</li>
           </ul>
@@ -408,7 +406,8 @@
             <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
             <li><kbd>Delete</kbd> : Delete instance at current frame</li>
             <li><kbd>Backspace</kbd> : Undo last added label</li>
-            <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
+            <li><kbd>Ctrl</kbd> + <kbd>S</kbd> : Commit Corrections</li>
+            <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> : Prev/Next video</li>
           </ul>
         </div>
       </div>

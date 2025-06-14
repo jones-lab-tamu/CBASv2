@@ -276,7 +276,6 @@ function setLabelingModeUI(mode, modelName = '') {
         controlsHeader.classList.add('bg-success');
         controlsHeader.querySelector('h5').innerHTML = `Reviewing: <span class="badge bg-light text-dark">${modelName}</span>`;
         
-        // This is the updated cheat sheet for Review Mode
         cheatSheet.innerHTML = `
             <div class="card bg-dark">
               <div class="card-header d-flex justify-content-between align-items-center">
@@ -293,17 +292,18 @@ function setLabelingModeUI(mode, modelName = '') {
                   <div class="col-md-6">
                     <ul class="list-unstyled">
                       <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> : Next/Prev Instance</li>
-                      <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame (within instance)</li>
+                      <li><kbd>←</kbd> / <kbd>→</kbd> : Step one frame</li>
                       <li><kbd>[</kbd> / <kbd>]</kbd> : Set Start/End of Instance</li>
                       <li><kbd>Enter</kbd> : Confirm / Lock / Unlock Instance</li>
                     </ul>
                   </div>
                   <div class="col-md-6">
                     <ul class="list-unstyled">
-                      <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
-                      <li><kbd>Delete</kbd> : Delete instance at current frame</li>
-                      <li><kbd>Backspace</kbd> : Undo last added label</li>
-                      <li><kbd>Ctrl</kbd> + <kbd>S</kbd> : Commit Corrections</li>
+                        <li><kbd>1</kbd> - <kbd>9</kbd> : Change Instance Label</li>
+                        <li><kbd>Delete</kbd> : Delete instance at current frame</li>
+                        <li><kbd>Backspace</kbd> : Undo last added label</li>
+                        <li><kbd>Ctrl</kbd> + <kbd>S</kbd> : Commit Corrections</li>
+                        <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> : Prev/Next video</li>
                     </ul>
                   </div>
                 </div>
@@ -311,12 +311,10 @@ function setLabelingModeUI(mode, modelName = '') {
             </div>`;
 
     } else { // 'scratch' mode
-        // --- CONFIGURE FOR SCRATCH MODE ---
         controlsHeader.classList.remove('bg-success');
         controlsHeader.classList.add('bg-dark');
         controlsHeader.querySelector('h5').innerHTML = `Behaviors (Click to label)`;
         
-        // This is the updated cheat sheet for Scratch Mode
         cheatSheet.innerHTML = `
             <div class="card bg-dark">
               <div class="card-header"><h5>Labeling Controls</h5></div>
@@ -335,7 +333,7 @@ function setLabelingModeUI(mode, modelName = '') {
                       <li><kbd>1</kbd> - <kbd>9</kbd> : Start / End a new label</li>
                       <li><kbd>Delete</kbd> : Delete instance at current frame</li>
                       <li><kbd>Backspace</kbd> : Undo last added label</li>
-                      <li><kbd>Ctrl</kbd> + <kbd>←</kbd> / <kbd>→</kbd> : Prev/Next video</li>
+                      <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> : Prev/Next video</li>
                     </ul>
                   </div>
                 </div>
@@ -845,7 +843,7 @@ async function showInferenceModal(datasetName) {
             let dateHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" id="${dateDir}-im" onchange="updateChildrenCheckboxes('${dateDir}-im', true)"><label class="form-check-label" for="${dateDir}-im">${dateDir}</label></div>`;
             let sessionsHTML = "<div style='margin-left:20px'>";
             fetchedRecordingTree[dateDir].forEach(sessionDir => {
-                sessionsHTML += `<div class="form-check"><input class="form-check-input" type="checkbox" id="${dateDir}-${sessionDir}-im"><label class="form-check-label" for="${dateDir}-${sessionDir}-im">${sessionDir}</label></div>`;
+                sessionsHTML += `<div class="form-check"><input class="form-check-input" type="checkbox" id="${dir}-${sessionDir}-im"><label class="form-check-label" for="${dateDir}-${sessionDir}-im">${sessionDir}</label></div>`;
             });
             sessionsHTML += `</div>`;
             treeContainer.innerHTML += dateHTML + sessionsHTML;
@@ -1076,18 +1074,16 @@ window.addEventListener("keydown", (event) => {
     }
 
     // --- SAVE HOTKEY ---
-    if (event.ctrlKey && event.key.toLowerCase() === 's') {
-        event.preventDefault(); // Prevent the browser's default "Save Page" dialog
+    if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+        event.preventDefault(); 
         const commitBtn = document.getElementById('save-labels-btn');
         if (commitBtn) {
-            commitBtn.click(); // Programmatically click the main commit/save button
+            commitBtn.click();
         }
-        return; // Stop further processing for this event
+        return; 
     }
 
-    // Ignore other key presses if the user is typing in the jump-to-frame input
     if (document.activeElement === document.getElementById('frame-jump-input')) {
-        // Allow 'Enter' to trigger the jump
         if (event.key === 'Enter') {
             jumpToFrame();
         }
@@ -1103,10 +1099,18 @@ window.addEventListener("keydown", (event) => {
 
     switch (event.key) {
         case "ArrowLeft":
-            (event.ctrlKey || event.metaKey) ? eel.next_video(-1)() : eel.next_frame(-scrubSpeedMultiplier)();
+            if (event.ctrlKey && event.shiftKey) { 
+                eel.next_video(-1)();
+            } else { // Simplified: All other arrow movements are free.
+                eel.next_frame(-scrubSpeedMultiplier)();
+            }
             break;
         case "ArrowRight":
-            (event.ctrlKey || event.metaKey) ? eel.next_video(1)() : eel.next_frame(scrubSpeedMultiplier)();
+            if (event.ctrlKey && event.shiftKey) { 
+                eel.next_video(1)();
+            } else { // Simplified: All other arrow movements are free.
+                eel.next_frame(scrubSpeedMultiplier)();
+            }
             break;
         case "ArrowUp":
             scrubSpeedMultiplier = Math.min(scrubSpeedMultiplier * 2, 128);
