@@ -65,7 +65,7 @@
    4. Enter the CBASv2 folder
       1. Type `cd cbas-v2`
    5. Switch to the stable branch
-      1. Type `git checkout v2-stable1
+      1. Type `git checkout v2-stable`
    5. Create a virtual environment for CBAS using Python 3.10
       1. Type `py -3.10 -m venv venv-v2`
    6. Activate virtual environment
