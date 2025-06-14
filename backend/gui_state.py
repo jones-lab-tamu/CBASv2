@@ -7,6 +7,7 @@ background thread handles, and other application-wide variables. This avoids
 the need for scattered global variables and makes state management more predictable.
 """
 
+import queue
 import threading
 from typing import TYPE_CHECKING, Any, List, Dict, Union
 import pandas as pd
@@ -130,3 +131,8 @@ viz_task_lock: Union[threading.Lock, None] = threading.Lock()
 """A lock to ensure thread-safe access to the visualization task ID."""
 latest_viz_task_id: int = 0
 """The ID of the most recently requested visualization task. Used to discard obsolete results."""
+
+# =================================================================
+# GLOBAL LOGGING QUEUE
+# =================================================================
+log_queue: queue.Queue = queue.Queue()

@@ -4,6 +4,7 @@ Manages all background processing for the CBAS application.
 This module defines the worker threads that handle long-running, resource-intensive
 tasks, ensuring the main application and GUI remain responsive. This includes:
 - EncodeThread: For converting video files into feature embeddings.
+- LogHelper: A utility to centralize logging from threads to the UI.
 - ClassificationThread: For running model inference on encoded data.
 - TrainingThread: For handling the entire model training and evaluation process.
 - VideoFileWatcher: For automatically detecting new recordings.
@@ -13,6 +14,7 @@ tasks, ensuring the main application and GUI remain responsive. This includes:
 import threading
 import time
 import ctypes
+from datetime import datetime
 import os
 import yaml
 
@@ -31,6 +33,23 @@ import eel
 import cbas
 import gui_state
 import classifier_head
+
+
+# =================================================================
+# LOGGING HELPER
+# =================================================================
+
+def log_message(message: str, level: str = "INFO"):
+    """
+    Puts a formatted message into the global log queue for the UI and
+    also prints it to the console for developer debugging.
+    """
+    timestamp = datetime.now().strftime('%H:%M:%S')
+    # The format [LEVEL] is specifically used by the frontend for color-coding.
+    formatted_message = f"[{timestamp}] [{level}] {message}"
+    print(formatted_message) # Keep console logging for developers
+    if gui_state.log_queue:
+        gui_state.log_queue.put(formatted_message)
 
 
 # =================================================================
@@ -54,7 +73,7 @@ class EncodeThread(threading.Thread):
                     file_to_encode = gui_state.encode_tasks.pop(0)
 
             if file_to_encode:
-                print(f"[EncodeThread] Starting encoding for: {file_to_encode}")
+                log_message(f"Starting encoding for: {os.path.basename(file_to_encode)}", "INFO")
                 if self.cuda_stream:
                     with torch.cuda.stream(self.cuda_stream):
                         out_file = cbas.encode_file(self.encoder, file_to_encode)
@@ -62,12 +81,12 @@ class EncodeThread(threading.Thread):
                     out_file = cbas.encode_file(self.encoder, file_to_encode)
                 
                 if out_file:
-                    print(f"[EncodeThread] Encoded '{file_to_encode}' to '{out_file}'")
+                    log_message(f"Finished encoding: {os.path.basename(file_to_encode)}", "INFO")
                     with gui_state.classify_lock:
                         gui_state.classify_tasks.append(out_file)
-                    print(f"[EncodeThread] Added '{out_file}' to classification queue.")
+                    log_message(f"Added '{os.path.basename(out_file)}' to classification queue.", "INFO")
                 else:
-                    print(f"[EncodeThread] Failed to encode: {file_to_encode}")
+                    log_message(f"Failed to encode: {os.path.basename(file_to_encode)}", "WARN")
             else:
                 time.sleep(1)  # Sleep if queue is empty to prevent busy-waiting
 
@@ -109,7 +128,7 @@ class ClassificationThread(threading.Thread):
         with gui_state.classify_lock:
             self.model_meta = model_obj
             self.whitelist = whitelist
-            print(f"[ClassificationThread] Loading model '{model_obj.name}'...")
+            log_message(f"Loading model '{model_obj.name}' for classification...", "INFO")
             try:
                 weights = torch.load(model_obj.weights_path, map_location=self.device, weights_only=True)
                 self.torch_model = classifier_head.classifier(
@@ -120,9 +139,9 @@ class ClassificationThread(threading.Thread):
                 self.torch_model.load_state_dict(weights)
                 self.torch_model.to(self.device).eval()
                 self.running = True
-                print(f"[ClassificationThread] Model '{model_obj.name}' loaded successfully.")
+                log_message(f"Model '{model_obj.name}' loaded successfully.", "INFO")
             except Exception as e:
-                print(f"[ClassificationThread] Error loading model '{model_obj.name}': {e}")
+                log_message(f"Error loading model '{model_obj.name}': {e}", "ERROR")
                 self.running = False
 
     def run(self):
@@ -137,7 +156,7 @@ class ClassificationThread(threading.Thread):
                     file_to_classify = gui_state.classify_tasks.pop(0)
 
             if can_run_now and file_to_classify:
-                print(f"[ClassificationThread] Starting classification for: {file_to_classify}")
+                log_message(f"Classifying: {os.path.basename(file_to_classify)} with model '{self.model_meta.name}'", "INFO")
                 if self.torch_model and self.model_meta:
                     if self.cuda_stream:
                         with torch.cuda.stream(self.cuda_stream):
@@ -146,17 +165,17 @@ class ClassificationThread(threading.Thread):
                         out_file = cbas.infer_file(file_to_classify, self.torch_model, self.model_meta.name, self.model_meta.config["behaviors"], self.model_meta.config["seq_len"], device=self.device)
                     
                     if out_file:
-                        print(f"[ClassificationThread] Classified '{file_to_classify}' to '{out_file}'")
+                        log_message(f"Finished classifying: {os.path.basename(file_to_classify)}", "INFO")
                     else:
-                        print(f"[ClassificationThread] Failed to classify: {file_to_classify}")
+                        log_message(f"Failed to classify: {os.path.basename(file_to_classify)}", "WARN")
                     
                     # Notify UI upon queue completion
                     with gui_state.classify_lock:
                         if not gui_state.classify_tasks:
-                            print("[ClassificationThread] Inference queue empty. Notifying UI.")
+                            log_message("Inference queue is empty. Classification complete.", "INFO")
                             eel.updateTrainingStatusOnUI(self.model_meta.name, "Inference complete.")()
                 else:
-                    print(f"[ClassificationThread] Model not ready, re-queuing: {file_to_classify}")
+                    log_message(f"Model not ready, re-queuing: {os.path.basename(file_to_classify)}", "WARN")
                     with gui_state.classify_lock:
                         gui_state.classify_tasks.insert(0, file_to_classify)
                     time.sleep(5)
@@ -193,7 +212,7 @@ class TrainingThread(threading.Thread):
         """Adds a new training task to this thread's queue."""
         with self.training_queue_lock:
             self.training_queue.append(task)
-        print(f"[TrainingThread] Queued training task for dataset: {task.name}")
+        log_message(f"Queued training task for dataset: {task.name}", "INFO")
 
     def run(self):
         """The main loop for the thread. Pulls tasks from its internal queue."""
@@ -204,7 +223,7 @@ class TrainingThread(threading.Thread):
                     task_to_run = self.training_queue.pop(0)
 
             if task_to_run:
-                print(f"[TrainingThread] --- Starting Training for Dataset: {task_to_run.name} ---")
+                log_message(f"--- Starting Training for Dataset: {task_to_run.name} ---", "INFO")
                 if self.cuda_stream:
                     with torch.cuda.stream(self.cuda_stream):
                         self._execute_training_task(task_to_run)
@@ -217,6 +236,7 @@ class TrainingThread(threading.Thread):
         """Orchestrates the training process: data loading, trials, and result saving."""
         try:
             eel.updateTrainingStatusOnUI(task.name, "Loading dataset...")()
+            log_message(f"Loading and processing dataset '{task.name}' for training...", "INFO")
             def update_progress(p): eel.updateDatasetLoadProgress(task.name, p)()
             
             if task.training_method == "weighted_loss":
@@ -226,10 +246,11 @@ class TrainingThread(threading.Thread):
                 weights = None
             
             eel.updateDatasetLoadProgress(task.name, 100)() # Signal completion
+            log_message(f"Dataset '{task.name}' loaded successfully.", "INFO")
             if not train_ds or len(train_ds) == 0:
                 raise ValueError("Dataset is empty or failed to load.")
         except Exception as e:
-            print(f"[TrainingThread] Critical error loading dataset {task.name}: {e}")
+            log_message(f"Critical error loading dataset {task.name}: {e}", "ERROR")
             eel.updateTrainingStatusOnUI(task.name, f"Error loading dataset: {e}")()
             eel.updateDatasetLoadProgress(task.name, -1)(); return
 
@@ -239,6 +260,7 @@ class TrainingThread(threading.Thread):
 
         for i in range(NUM_TRIALS):
             eel.updateTrainingStatusOnUI(task.name, f"Training Trial {i + 1}/{NUM_TRIALS}...")()
+            log_message(f"Starting training trial {i + 1}/{NUM_TRIALS} for '{task.name}'.", "INFO")
             trial_model, trial_reports, trial_best_epoch = cbas.train_lstm_model(
                 train_ds, test_ds, task.sequence_length, task.behaviors,
                 lr=task.learning_rate, batch_size=task.batch_size,
@@ -249,17 +271,18 @@ class TrainingThread(threading.Thread):
                 f1 = trial_reports[trial_best_epoch].sklearn_report.get("weighted avg", {}).get("f1-score", -1.0)
                 eel.updateTrainingStatusOnUI(task.name, f"Trial {i + 1} F1: {f1:.4f}")()
                 if f1 > best_f1:
+                    log_message(f"New best model in Trial {i + 1} with F1: {f1:.4f}", "INFO")
                     best_f1, best_model, best_reports, best_epoch = f1, trial_model, trial_reports, trial_best_epoch
-                    print(f"    >>> New best model found in Trial {i + 1} with F1: {best_f1:.4f} <<<")
 
         if best_model:
             self._save_training_results(task, best_model, best_reports, best_epoch)
         else:
+            log_message(f"Training failed for '{task.name}' after {NUM_TRIALS} trials.", "ERROR")
             eel.updateTrainingStatusOnUI(task.name, f"Training failed after {NUM_TRIALS} trials.")
 
     def _save_training_results(self, task, model, reports, best_epoch_idx):
         """Saves the best model, performance reports, and plots."""
-        print(f"[TrainingThread] Saving results for best model (F1: {reports[best_epoch_idx].sklearn_report['weighted avg']['f1-score']:.4f})...")
+        log_message(f"Saving results for best model (F1: {reports[best_epoch_idx].sklearn_report['weighted avg']['f1-score']:.4f})...", "INFO")
         model_dir = os.path.join(gui_state.proj.models_dir, task.name)
         os.makedirs(model_dir, exist_ok=True)
         torch.save(model.state_dict(), os.path.join(model_dir, "model.pth"))
@@ -284,6 +307,7 @@ class TrainingThread(threading.Thread):
             
         gui_state.proj.models[task.name] = cbas.Model(model_dir)
         self._update_metrics_in_ui(task.name, best_report.sklearn_report, task.behaviors, task.dataset)
+        log_message(f"Training for '{task.name}' complete. Model and reports saved.", "INFO")
         eel.updateTrainingStatusOnUI(task.name, f"Training complete. Best F1: {best_report.sklearn_report['weighted avg']['f1-score']:.4f}")
 
     def _update_metrics_in_ui(self, dataset_name, report_dict, behaviors, dataset_obj):
@@ -364,7 +388,7 @@ class VideoFileWatcher(FileSystemEventHandler):
         if event.is_directory or not event.src_path.endswith('.mp4'): return
 
         video_path = event.src_path
-        print(f"[VideoFileWatcher] Detected new file: {video_path}")
+        log_message(f"Watcher detected new file: {os.path.basename(video_path)}", "INFO")
 
         # =========================================================================
         # NEW LOGIC TO PREVENT WATCHER FROM ACTING ON IMPORTS
@@ -376,7 +400,7 @@ class VideoFileWatcher(FileSystemEventHandler):
             camera_name = os.path.basename(video_path).rsplit('_', 1)[0]
             # gui_state.proj might not exist on initial startup, so check it.
             if not gui_state.proj or camera_name not in gui_state.proj.active_recordings:
-                print(f"[VideoFileWatcher] Ignoring file '{os.path.basename(video_path)}' as it's not from an active recording stream.")
+                log_message(f"Ignoring file '{os.path.basename(video_path)}' as it's not from an active recording stream.", "INFO")
                 return
         except (IndexError, AttributeError):
              # If parsing fails or proj isn't loaded, safely exit.
@@ -389,7 +413,7 @@ class VideoFileWatcher(FileSystemEventHandler):
             name_part, num_str = os.path.splitext(basename)[0].rsplit('_', 1)
             current_seg_num = int(num_str)
         except (ValueError, IndexError) as e:
-            print(f"[VideoFileWatcher] Could not parse segment number from {basename}: {e}"); return
+            log_message(f"Could not parse segment number from {basename}: {e}", "WARN"); return
 
         if current_seg_num > 0:
             prev_seg_num_str = str(current_seg_num - 1).zfill(len(num_str))
@@ -399,7 +423,7 @@ class VideoFileWatcher(FileSystemEventHandler):
                 with gui_state.encode_lock:
                     if prev_file not in gui_state.encode_tasks:
                         gui_state.encode_tasks.append(prev_file)
-                        print(f"[VideoFileWatcher] Queued for encoding: '{prev_file}'")
+                        log_message(f"Watcher queued for encoding: '{os.path.basename(prev_file)}'", "INFO")
 
 
 # =================================================================
@@ -409,7 +433,7 @@ class VideoFileWatcher(FileSystemEventHandler):
 @eel.expose
 def start_threads():
     """Initializes and starts all background worker threads."""
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Initializing worker threads on device: {device}")
 
     gui_state.encode_lock = threading.Lock()
@@ -439,12 +463,12 @@ def start_recording_watcher():
     gui_state.recording_observer = Observer()
     gui_state.recording_observer.schedule(event_handler, gui_state.proj.recordings_dir, recursive=True)
     gui_state.recording_observer.start()
-    print(f"Recording watcher started on: {gui_state.proj.recordings_dir}")
+    log_message(f"Recording watcher started on: {gui_state.proj.recordings_dir}", "INFO")
 
 
 def stop_threads():
     """Attempts to gracefully stop all running background threads."""
-    print("Attempting to stop all worker threads...")
+    log_message("Attempting to stop all worker threads...", "INFO")
     if gui_state.recording_observer and gui_state.recording_observer.is_alive():
         gui_state.recording_observer.stop()
         gui_state.recording_observer.join(timeout=2)
@@ -456,6 +480,6 @@ def stop_threads():
             try:
                 thread.raise_exception()
                 thread.join(timeout=2)
-                print(f"{name}Thread stopped.")
+                log_message(f"{name}Thread stopped.", "INFO")
             except Exception as e:
-                print(f"Error stopping {name}Thread: {e}")
+                log_message(f"Error stopping {name}Thread: {e}", "ERROR")

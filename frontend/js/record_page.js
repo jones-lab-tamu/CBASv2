@@ -5,6 +5,79 @@
  */
 
 // =================================================================
+// EEL-EXPOSED & LOG PANEL FUNCTIONS
+// =================================================================
+
+eel.expose(update_log_panel);
+function update_log_panel(message) {
+    const logContainer = document.getElementById('log-panel-content');
+    if (!logContainer) return;
+
+    // --- Logic for sessionStorage ---
+    // 1. Get current history or initialize a new array
+    let logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
+    // 2. Add the new message
+    logHistory.push(message);
+    // 3. Keep the history from growing indefinitely (e.g., last 500 messages)
+    while (logHistory.length > 500) {
+        logHistory.shift();
+    }
+    // 4. Save the updated history back to sessionStorage
+    sessionStorage.setItem('logHistory', JSON.stringify(logHistory));
+    // --- End of sessionStorage logic ---
+
+    // Now, render the new message to the screen
+    renderLogMessage(message, logContainer);
+    // Auto-scroll to the bottom
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+/**
+ * Helper function to render a single log message to the DOM.
+ * @param {string} message - The log message text.
+ * @param {HTMLElement} container - The container to append the message to.
+ */
+function renderLogMessage(message, container) {
+    const logEntry = document.createElement('div');
+    logEntry.className = 'log-message';
+
+    if (message.includes('[ERROR]')) {
+        logEntry.classList.add('log-level-ERROR');
+    } else if (message.includes('[WARN]')) {
+        logEntry.classList.add('log-level-WARN');
+    } else {
+        logEntry.classList.add('log-level-INFO');
+    }
+    
+    logEntry.textContent = message;
+    container.appendChild(logEntry);
+}
+
+
+// Attach event listener for the clear log button and to load history on page start
+document.addEventListener('DOMContentLoaded', () => {
+    const logContainer = document.getElementById('log-panel-content');
+    if (logContainer) {
+        // Load history from sessionStorage on page load
+        const logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
+        logHistory.forEach(msg => renderLogMessage(msg, logContainer));
+        logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom after loading
+    }
+    
+    const clearBtn = document.getElementById('clear-log-btn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            if (logContainer) {
+                logContainer.innerHTML = '';
+                // Also clear the stored history
+                sessionStorage.setItem('logHistory', '[]'); 
+                update_log_panel('Log cleared.');
+            }
+        });
+    }
+});
+
+// =================================================================
 // GLOBAL STATE & VARIABLES
 // =================================================================
 
@@ -422,6 +495,28 @@ document.addEventListener('DOMContentLoaded', () => {
     settingIds.forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => drawBoundsOnModalCanvas(modalPreviewImage));
     });
+
+    // START OF NEW CODE BLOCK
+    const logCollapseElement = document.getElementById('log-panel-collapse');
+    if (logCollapseElement) {
+        const fabLeft = document.querySelector('.fab-container-left');
+        const fabRight = document.querySelector('.fab-container-right');
+
+        // Height of the expanded log content + height of the log bar + some margin
+        const fabUpPosition = `${200 + 45 + 5}px`; 
+        const fabDownPosition = '65px';
+
+        logCollapseElement.addEventListener('show.bs.collapse', () => {
+            if (fabLeft) fabLeft.style.bottom = fabUpPosition;
+            if (fabRight) fabRight.style.bottom = fabUpPosition;
+        });
+
+        logCollapseElement.addEventListener('hide.bs.collapse', () => {
+            if (fabLeft) fabLeft.style.bottom = fabDownPosition;
+            if (fabRight) fabRight.style.bottom = fabDownPosition;
+        });
+    }
+    // END OF NEW CODE BLOCK
 });
 
 /** Page unload listeners to ensure Python processes are killed. */

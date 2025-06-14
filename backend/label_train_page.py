@@ -42,6 +42,8 @@ def _video_import_worker(session_name: str, video_paths: list[str]):
     (WORKER) Runs in a separate thread to handle slow file copy operations.
     """
     try:
+        workthreads.log_message(f"Starting import of {len(video_paths)} videos to session '{session_name}'.", "INFO")
+
         # This is the same logic that was in import_videos before
         date_str = datetime.now().strftime("%Y%m%d")
         date_dir = os.path.join(gui_state.proj.recordings_dir, date_str)
@@ -62,9 +64,11 @@ def _video_import_worker(session_name: str, video_paths: list[str]):
             with gui_state.encode_lock:
                 new_files_to_queue = [f for f in newly_copied_files if f not in gui_state.encode_tasks]
                 gui_state.encode_tasks.extend(new_files_to_queue)
+            workthreads.log_message(f"Queued {len(new_files_to_queue)} imported files for encoding.", "INFO")
         
         gui_state.proj.reload_recordings()
 
+        workthreads.log_message(f"Successfully imported {len(video_paths)} video(s).", "INFO")
         # Call the JavaScript function to notify completion
         eel.notify_import_complete(True, f"Successfully imported {len(video_paths)} video(s) to session '{session_name}'.")
 

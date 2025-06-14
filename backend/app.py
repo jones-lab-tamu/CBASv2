@@ -17,6 +17,7 @@ import os
 import sys
 import socket
 import torch
+import threading
 
 # Local application imports
 import eel
@@ -28,6 +29,7 @@ import startup_page
 import record_page
 import label_train_page
 import visualize_page
+import gui_state
 
 
 def find_available_port(start_port=8000, max_tries=100) -> int:
@@ -55,6 +57,25 @@ def find_available_port(start_port=8000, max_tries=100) -> int:
     raise IOError("No free ports found for Eel application.")
 
 
+def _log_forwarder_task():
+    """
+    Pulls messages from the global log_queue and forwards them to the UI.
+    This runs in a dedicated thread to avoid blocking.
+    """
+    while True:
+        try:
+            # block=True makes this efficient; it waits until an item is available
+            message = gui_state.log_queue.get(block=True)
+            if message is None: # A "poison pill" to stop the thread
+                print("Log forwarder thread received stop signal.")
+                break
+            # Use eel.spawn to safely call the frontend from this thread
+            eel.spawn(eel.update_log_panel(message))
+        except Exception as e:
+            # Don't let the logger crash the main application
+            print(f"Error in log forwarder thread: {e}")
+
+
 def main():
     """Initializes the backend server and waits for the Electron app to connect."""
 
@@ -80,6 +101,10 @@ def main():
     # Start all background processing threads (encoding, training, etc.)
     workthreads.start_threads()
 
+    # Start the thread that forwards log messages to the GUI
+    log_forwarder_thread = threading.Thread(target=_log_forwarder_task, daemon=True)
+    log_forwarder_thread.start()
+
     # Find a free port for the web server to run on.
     port = find_available_port()
 
@@ -100,6 +125,9 @@ def main():
         # This block will be executed when the Electron app closes, which kills this process.
         print("Shutdown signal received, Python process is terminating.")
     finally:
+        # Send signal to stop the log forwarder thread
+        if gui_state.log_queue:
+            gui_state.log_queue.put(None)
         # Ensure worker threads are stopped cleanly on exit.
         workthreads.stop_threads()
 

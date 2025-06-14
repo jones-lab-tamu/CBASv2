@@ -215,6 +215,28 @@
   <div id="cover-spin"></div>
 
   <div class="progress" id="inference-bar" style="border: 1px solid white"></div>
+  
+  <!-- =================================================================
+  LOG PANEL FOOTER
+  ================================================================== -->
+  <div class="log-panel-footer">
+    <!-- This is the button that toggles the panel -->
+    <div class="d-flex justify-content-end p-2 bg-dark">
+      <!-- MODIFIED: Added tooltip attributes -->
+      <button class="btn btn-sm btn-outline-secondary me-2" id="clear-log-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Clear all messages from the log">Clear Log</button>
+      <!-- MODIFIED: Added tooltip attributes -->
+      <button class="btn btn-sm btn-info" type="button" data-bs-toggle="collapse" data-bs-target="#log-panel-collapse" aria-expanded="false" aria-controls="log-panel-collapse" data-bs-toggle="tooltip" data-bs-placement="top" title="Show/Hide the log panel">
+        <i class="bi bi-terminal"></i> View Log
+      </button>
+    </div>
+    <!-- This is the collapsible panel itself -->
+    <div class="collapse" id="log-panel-collapse">
+      <div id="log-panel-content">
+        <!-- Log messages will be appended here by JavaScript -->
+      </div>
+    </div>
+  </div>
+
 
   <!-- Bootstrap JS Bundle -->
   <script src="libs/bootstrap-5.3.3/js/bootstrap.bundle.min.js"></script>

@@ -35,22 +35,24 @@
 
 .fab-container-left {
     position: fixed;
-    bottom: 30px;
+    bottom: 65px; /* Pushed up to clear the log bar. */
     left: 30px;
     display: flex;
     flex-direction: column-reverse; /* Stack new buttons on top */
     align-items: center;
     gap: 15px; /* Adds space between buttons in the container */
+    transition: bottom 0.35s ease-in-out; /* For smooth animation */
 }
 
 .fab-container-right {
     position: fixed;
-    bottom: 30px;
+    bottom: 65px; /* Pushed up to clear the log bar. */
     right: 30px;
     display: flex;
     flex-direction: column-reverse; /* Stack new buttons on top */
     align-items: center;
     gap: 15px; /* Adds space between buttons in the container */
+    transition: bottom 0.35s ease-in-out; /* For smooth animation */
 }
 
 /* --- Legacy/Unused FAB Styles --- */
@@ -220,3 +222,44 @@ kbd {
 
 /* NOTE: SourceMappingURL is a developer tool feature. */
 /*# sourceMappingURL=index.css.map */
+
+/* =================================================================
+   LOG PANEL STYLES
+   ================================================================= */
+.log-panel-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1050; /* Above most elements */
+}
+
+/* NEW: Give the toggle bar a fixed height and center its contents */
+.log-panel-footer .d-flex {
+    height: 45px;
+    align-items: center;
+}
+
+#log-panel-content {
+    background-color: #212529; /* Bootstrap dark bg */
+    color: #f8f9fa; /* Bootstrap light text */
+    min-height: 200px; /* MODIFIED: Changed max-height to min-height */
+    max-height: 200px; /* Kept max-height to ensure it doesn't grow further */
+    overflow-y: scroll; /* Enable vertical scrolling */
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.8rem;
+    padding: 10px;
+    border-top: 1px solid #495057;
+}
+
+/* Styles for individual log messages */
+.log-message {
+    padding: 2px 5px;
+    border-radius: 3px;
+    white-space: pre-wrap; /* Wrap long lines */
+    margin-bottom: 2px;
+}
+
+.log-level-INFO { color: #ced4da; }
+.log-level-WARN { color: #ffc107; background-color: rgba(255, 193, 7, 0.1); }
+.log-level-ERROR { color: #f8d7da; background-color: #dc3545; font-weight: bold;}

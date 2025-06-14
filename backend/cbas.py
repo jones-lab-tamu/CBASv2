@@ -60,7 +60,7 @@ class InvalidProject(Exception):
 # CORE PROCESSING FUNCTIONS
 # =================================================================
 
-def encode_file(encoder: nn.Module, path: str) -> str | None:
+def encode_file(encoder: nn.Module, path: str, progress_callback=None) -> str | None:
     """
     Extracts DINOv2 embeddings from a video file in chunks to conserve memory
     and saves them to a resizable HDF5 file.
