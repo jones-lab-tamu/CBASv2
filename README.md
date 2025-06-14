@@ -11,17 +11,27 @@
 
 ---
 
-CBAS (Circadian Behavioral Analysis Suite) is a full-featured application for phenotyping complex animal behaviors. It is designed to automate the classification of behaviors from video data and provide a simple, powerful interface for visualizing and analyzing the results.
+CBAS (Circadian Behavioral Analysis Suite) is a full-featured, open-source application for phenotyping complex animal behaviors. It is designed to automate the classification of behaviors from video data and provide a simple, powerful interface for visualizing and analyzing the results.
 
 *Originally created by Logan Perry and now maintained by the Jones Lab at Texas A&M University.*
+
+## Key Features at a Glance
+
+*   **Standalone Desktop App:** A robust, cross-platform application for Windows, macOS, and Linux. No web browser required.
+*   **Real-time Video Acquisition:** Record and process video from any number of network-based RTSP cameras simultaneously.
+*   **High-Performance AI:** Uses a state-of-the-art DINOv2 Vision Transformer backbone for powerful and accurate feature extraction.
+*   **Active Learning Workflow:** Dramatically accelerate labeling by pre-labeling videos with an existing model and using the "Review & Correct" interface to rapidly fix mistakes.
+*   **Advanced Labeling Interface:** Features an interactive, zoomable timeline, confidence-based filtering, and keyboard shortcuts for efficient instance correction.
+*   **Automated Model Training:** Create custom, high-performance behavior classifiers with just a few clicks. Includes tools for handling rare behaviors and generates detailed performance reports.
+*   **Rich Data Visualization:** Generate multi-plot actograms, compare behaviors side-by-side, and analyze circadian patterns with interactive controls.
 
 ## What's New in CBAS v3?
 
 CBAS v3 is a ground-up rebuild of the original application, focused on stability, performance, and a dramatically improved user workflow.
 
 *   **Standalone Desktop Application:** v3 is now a robust, cross-platform desktop app powered by Electron. It no longer runs in a web browser and can be used completely offline.
-*   **Advanced "Active Learning" Workflow:** The labeling process has been supercharged. You can now pre-label videos with a model and then use the new **Review & Correct** mode to rapidly verify its predictions.
-*   **Confidence-Based Filtering:** Focus your efforts where they matter most. The new interface allows you to filter and view only the behavioral instances the model is least certain about.
+*   **Advanced "Active Learning" Workflow:** The labeling process has been supercharged. Pre-label videos with any model, then use `Tab` to instantly jump between the model's predictions and use the interactive timeline to rapidly correct boundaries.
+*   **Confidence-Based Filtering:** Focus your efforts where they matter most. The new interface allows you to filter and view only the behavioral instances the model is least certain about, making your labeling time more efficient.
 *   **Enhanced Visualization:** Generate side-by-side actograms for direct comparison of multiple behaviors.
 *   **Modern, Stable Backend:** The application's backend has been re-engineered with dedicated worker threads for a stable, responsive, and crash-free experience during intensive tasks like training and inference.
 
@@ -35,8 +45,6 @@ CBAS v3 is a ground-up rebuild of the original application, focused on stability
 </p>
 
 ## Core Modules
-
-CBAS is a user-friendly, GUI-enabled Python package that consists of three main modules:
 
 ---
 ### Module 1: Acquisition
@@ -68,9 +76,9 @@ This module uses a powerful machine learning model to automatically classify beh
 
 The training module in v3 introduces a modern, efficient workflow for creating high-quality, custom datasets and models.
 
-*   **Active Learning Interface:** The new "Review & Correct" mode allows you to pre-label videos with an existing model. You can then use the new **confidence-based filtering and zoomable timeline** to rapidly find and correct the model's mistakes, dramatically reducing manual labeling time.
+*   **Active Learning Interface:** The new "Review & Correct" mode allows you to pre-label videos with an existing model. You can then use the new **confidence-based filtering and interactive timeline** to rapidly find and correct the model's mistakes, dramatically reducing manual labeling time.
 *   **Flexible Training Options:** Train models using balanced oversampling or a weighted-loss function to handle rare behaviors.
-*   **Detailed Performance Metrics:** After training, CBAS automatically generates detailed performance reports, F1/precision/recall plots, and confusion matrices to help you evaluate and trust your new custom model.
+*   **Automated Performance Reports:** After training, CBAS automatically generates detailed performance reports, including F1/precision/recall plots and confusion matrices, to help you evaluate and trust your new custom model.
 
 <p align="center">
     <img src=".//assets/training_1.png" alt="CBAS Training Diagram" style="width: 500px; height: auto;">
@@ -94,9 +102,8 @@ We have tested the installation instructions to be as straightforward and user-f
 
 ## Setup & Use
 
-*   [**Camera Setup:** Click here for instructions on how to set up RTSP IP cameras.](Cameras.md)
-*   [**Recording Setup:** For replicating our specific nine-behavior setup, see these instructions and parts list.](Recording_setup.md)
-*   [**Training a Custom Model:** To learn how to create a new dataset and train a custom classification model, click here.](Training.md)
+*   [**Camera & Recording Setup:** For instructions on configuring RTSP IP cameras and our recommended recording hardware.](Cameras.md)
+*   [**Training a Custom Model:** For a detailed guide on creating a new dataset and training a custom classification model.](Training.md)
 
 --------------
 ## Hardware Requirements
