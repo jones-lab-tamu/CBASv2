@@ -4,23 +4,32 @@
 
 # CBAS (Circadian Behavioral Analysis Suite)
 
-CBAS is a suite of tools for phenotyping complex animal behaviors. It is designed to automate classification of behaviors from active live streams of video data and provide a simple interface for visualizing and analyzing the results.
+CBAS is a suite of tools for phenotyping complex animal behaviors. It is designed to automate classification of behaviors from video data and provide a simple interface for visualizing and analyzing the results.
 
 *Written and maintained by Logan Perry, a post-bac in the Jones Lab at Texas A&M University.*
 
-CBAS was designed with circadian behavior monitoring in mind. Here's a visualization of what CBAS can do!  Note that the behaviors are not set in stone, and can be easily changed to fit the user's needs.
+CBAS was designed with circadian behavior monitoring in mind. Here's a visualization of what CBAS can do! Note that the behaviors are not set in stone, and can be easily changed to fit the user's needs.
 <p align="center">
     <img src=".//assets/realtime.gif" alt="CBAS actograms" style="width: 600px; height: auto;">
 </p>
 <p align="center"> 
 
-###### *(Left) Real-time video recording of an individual mouse over two weeks in a 12h:12h light:dark cycle and in constant darkness. (Right) real-time actogram generation of nine distinct home cage behaviors.* 
+###### *(Left) Video recording of an individual mouse over two weeks in a 12h:12h light:dark cycle and in constant darkness. (Right) Actogram generation of nine distinct home cage behaviors.* 
 
 </p>
 
-## Background
+## The CBAS Workflow
 
-CBAS is a user-friendly, GUI-enabled Python package that allows for the automated acquisition, classification, and visualization of behaviors over time. It consists of three modules:
+For a new user, the end-to-end process in CBAS generally follows these steps:
+
+1.  **Acquire Data:** Record videos directly from IP cameras within CBAS or import existing `.mp4` files into a project.
+2.  **Automatic Encoding:** CBAS works in the background to automatically process new videos (`.mp4`), encoding them into feature files (`_cls.h5`) that the machine learning models can understand.
+3.  **Train a Model (Optional):** Label a subset of your video data with behaviors of interest and train a new, custom classification model.
+4.  **Run Inference & Visualize:** Use a trained model (either the included one or your own) to classify the encoded videos. This produces data (`_outputs.csv`) that you can then explore using the visualization tools.
+
+## The Three Modules
+
+CBAS consists of three primary modules that enable this workflow:
 
 - ### Module 1: Acquisition
 
@@ -29,7 +38,7 @@ CBAS is a user-friendly, GUI-enabled Python package that allows for the automate
 </p>
 <p align="center"> 
 
-The acquisition module is capable of batch processing streaming video data from any number of network-configured real-time streaming protocol (RTSP) IP cameras.
+The acquisition module is capable of processing video data from any number of network-configured real-time streaming protocol (RTSP) IP cameras. It also allows for the import of existing video files.
 
 - ### Module 2: Classification and visualization
 
@@ -38,14 +47,14 @@ The acquisition module is capable of batch processing streaming video data from 
 </p>
 <p align="center"> 
 
-CBAS performs real-time classification using a frozen feature extractor "backbone," the [state-of-the-art DINOv2 vision transformer](https://arxiv.org/abs/2304.07193). DINOv2 has been pretrained using a self-supervised approach that is highly generalizable and can be used for a wide variety of classification tasks. We have added a joint long short-term memory and linear layer classification model 'head' onto this backbone to classify our behaviors of interest (see below) but, importantly, users can quickly and easily train their own model heads onto the static DINOv2 visual backbone to accommodate their specific behavior classification needs.
+CBAS performs automated inference using a frozen feature extractor "backbone," the [state-of-the-art DINOv2 vision transformer](https://arxiv.org/abs/2304.07193). DINOv2 has been pretrained using a self-supervised approach that is highly generalizable and can be used for a wide variety of classification tasks. We have added a joint long short-term memory and linear layer classification model 'head' onto this backbone to classify our behaviors of interest (see below) but, importantly, users can quickly and easily train their own model heads onto the static DINOv2 visual backbone to accommodate their specific behavior classification needs.
 
 <p align="center">
     <img src=".//assets/clocklab.png" alt="CBAS Diagram" style="width: 300px; height: auto;">
 </p>
 <p align="center"> 
 
-The classification and visualization module enables real-time inference on streaming video and displays acquired behavior time series data in real time as actograms that can be readily exported for offline analysis in a file format compatible with ClockLab Analysis, a widely-used circadian analysis software.
+The classification and visualization module enables automated inference on recorded video and displays acquired behavior time series data as actograms that can be readily exported for offline analysis in a file format compatible with ClockLab Analysis, a widely-used circadian analysis software.
 
 
 

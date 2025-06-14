@@ -18,7 +18,28 @@ import workthreads
 
 @eel.expose
 def load_dataset_configs():
-    return {name: gui_state.proj.datasets[name].config for name in gui_state.proj.datasets }
+    """
+    Loads dataset configurations, ensuring data is read fresh from disk
+    to reflect updates from background threads.
+    """
+    fresh_configs = {}
+    if gui_state.proj:
+        # Iterate through the dataset objects held in memory
+        for name, dataset_obj in gui_state.proj.datasets.items():
+            try:
+                # Re-read the config file directly from the disk
+                with open(dataset_obj.config_path, 'r') as f:
+                    config_data = yaml.safe_load(f)
+                
+                # IMPORTANT: Update the in-memory object as well to prevent staleness
+                dataset_obj.config = config_data
+                fresh_configs[name] = config_data
+            except (FileNotFoundError, yaml.YAMLError) as e:
+                print(f"Could not reload config for dataset '{name}': {e}")
+                # Optionally, return the stale data as a fallback
+                fresh_configs[name] = dataset_obj.config
+
+    return fresh_configs
 
 @eel.expose
 def handle_click_on_label_image(x, y):
