@@ -239,11 +239,18 @@ class TrainingThread(threading.Thread):
             log_message(f"Loading and processing dataset '{task.name}' for training...", "INFO")
             def update_progress(p): eel.updateDatasetLoadProgress(task.name, p)()
             
+            # --- START OF MODIFICATION ---
+            train_insts, test_insts = None, None # Initialize
             if task.training_method == "weighted_loss":
-                train_ds, test_ds, weights = gui_state.proj.load_dataset_for_weighted_loss(task.name, seq_len=task.sequence_length, progress_callback=update_progress)
+                train_ds, test_ds, weights, train_insts, test_insts = gui_state.proj.load_dataset_for_weighted_loss(task.name, seq_len=task.sequence_length, progress_callback=update_progress)
             else:
-                train_ds, test_ds = gui_state.proj.load_dataset(task.name, seq_len=task.sequence_length, progress_callback=update_progress)
+                train_ds, test_ds, train_insts, test_insts = gui_state.proj.load_dataset(task.name, seq_len=task.sequence_length, progress_callback=update_progress)
                 weights = None
+            
+            # Error check if loading failed
+            if train_ds is None or test_ds is None or train_insts is None or test_insts is None:
+                raise ValueError("Dataset loading returned None. Check for empty labels or other data issues.")
+            # --- END OF MODIFICATION ---
             
             eel.updateDatasetLoadProgress(task.name, 100)() # Signal completion
             log_message(f"Dataset '{task.name}' loaded successfully.", "INFO")
@@ -275,12 +282,13 @@ class TrainingThread(threading.Thread):
                     best_f1, best_model, best_reports, best_epoch = f1, trial_model, trial_reports, trial_best_epoch
 
         if best_model:
-            self._save_training_results(task, best_model, best_reports, best_epoch)
+            # Pass the raw instance lists down to the saving function
+            self._save_training_results(task, best_model, best_reports, best_epoch, train_insts, test_insts)
         else:
             log_message(f"Training failed for '{task.name}' after {NUM_TRIALS} trials.", "ERROR")
             eel.updateTrainingStatusOnUI(task.name, f"Training failed after {NUM_TRIALS} trials.")
 
-    def _save_training_results(self, task, model, reports, best_epoch_idx):
+    def _save_training_results(self, task, model, reports, best_epoch_idx, train_insts, test_insts):
         """Saves the best model, performance reports, and plots."""
         log_message(f"Saving results for best model (F1: {reports[best_epoch_idx].sklearn_report['weighted avg']['f1-score']:.4f})...", "INFO")
         model_dir = os.path.join(gui_state.proj.models_dir, task.name)
@@ -306,19 +314,101 @@ class TrainingThread(threading.Thread):
             plot_report_list_metric(reports, metric, task.behaviors, task.dataset.path)
             
         gui_state.proj.models[task.name] = cbas.Model(model_dir)
-        self._update_metrics_in_ui(task.name, best_report.sklearn_report, task.behaviors, task.dataset)
+        # Pass the instance lists to the UI update function
+        self._update_metrics_in_ui(task.name, best_report.sklearn_report, task.behaviors, task.dataset, train_insts, test_insts)
         log_message(f"Training for '{task.name}' complete. Model and reports saved.", "INFO")
         eel.updateTrainingStatusOnUI(task.name, f"Training complete. Best F1: {best_report.sklearn_report['weighted avg']['f1-score']:.4f}")
 
-    def _update_metrics_in_ui(self, dataset_name, report_dict, behaviors, dataset_obj):
-        """Helper to push final metrics to the UI table via Eel."""
+    def _update_metrics_in_ui(self, dataset_name, report_dict, behaviors, dataset_obj, train_insts, test_insts):
+        """
+        Helper to calculate final instance/frame counts, check for imbalance (both low and high),
+        push all metrics to the UI table, and save them to the dataset's config file.
+        """
+        from collections import Counter
+        import numpy as np
+
+        # --- 1. Count INSTANCES and FRAMES per behavior ---
+        train_instance_counts = Counter(inst['label'] for inst in train_insts)
+        test_instance_counts = Counter(inst['label'] for inst in test_insts)
+        train_frame_counts = Counter()
+        for inst in train_insts:
+            train_frame_counts[inst['label']] += (inst['end'] - inst['start'] + 1)
+        test_frame_counts = Counter()
+        for inst in test_insts:
+            test_frame_counts[inst['label']] += (inst['end'] - inst['start'] + 1)
+
+        # --- 2. Check for Class Imbalance (Low and High) ---
+        total_behaviors = len(behaviors)
+        if total_behaviors > 1:
+            avg_train_inst = sum(train_instance_counts.values()) / total_behaviors
+            avg_test_inst = sum(test_instance_counts.values()) / total_behaviors
+            avg_train_frame = sum(train_frame_counts.values()) / total_behaviors
+            avg_test_frame = sum(test_frame_counts.values()) / total_behaviors
+            
+            LOW_THRESHOLD = 0.25
+            HIGH_THRESHOLD = 3.0 
+        else:
+            avg_train_inst, avg_test_inst, avg_train_frame, avg_test_frame = 0, 0, 0, 0
+
+        # --- 3. Update all metrics and counts ---
         for b in behaviors:
             metrics = report_dict.get(b, {})
-            dataset_obj.update_metric(b, "F1 Score", round(metrics.get("f1-score", 0), 2))
-            dataset_obj.update_metric(b, "Recall", round(metrics.get("recall", 0), 2))
-            dataset_obj.update_metric(b, "Precision", round(metrics.get("precision", 0), 2))
-            eel.updateMetricsOnPage(dataset_name, b, "F1 Score", dataset_obj.config["metrics"][b]["F1 Score"])()
-            # ... and so on for all other metrics
+            
+            f1 = round(metrics.get("f1-score", 0), 2)
+            recall = round(metrics.get("recall", 0), 2)
+            precision = round(metrics.get("precision", 0), 2)
+            
+            train_n_inst = train_instance_counts.get(b, 0)
+            test_n_inst = test_instance_counts.get(b, 0)
+            train_n_frame = train_frame_counts.get(b, 0)
+            test_n_frame = test_frame_counts.get(b, 0)
+
+            # --- Build structured dictionaries for the UI ---
+            train_data = {
+                'inst': train_n_inst,
+                'frame': int(train_n_frame),
+                'inst_status': 'none',
+                'frame_status': 'none'
+            }
+            if total_behaviors > 1:
+                # Check for low representation (critical warning)
+                if train_n_inst < avg_train_inst * LOW_THRESHOLD: train_data['inst_status'] = 'low'
+                # Check for high representation (informational notice)
+                elif train_n_inst > avg_train_inst * HIGH_THRESHOLD: train_data['inst_status'] = 'high'
+                
+                if train_n_frame < avg_train_frame * LOW_THRESHOLD: train_data['frame_status'] = 'low'
+            
+            test_data = {
+                'inst': test_n_inst,
+                'frame': int(test_n_frame),
+                'inst_status': 'none',
+                'frame_status': 'none'
+            }
+            if total_behaviors > 1:
+                 if test_n_inst < avg_test_inst * LOW_THRESHOLD: test_data['inst_status'] = 'low'
+                 if test_n_frame < avg_test_frame * LOW_THRESHOLD: test_data['frame_status'] = 'low'
+
+            # Save raw values to the config file
+            # Get the display strings we already created
+            train_display = f"{train_n_inst} ({int(train_n_frame)})"
+            test_display = f"{test_n_inst} ({int(test_n_frame)})"
+
+            # Save the final, formatted DISPLAY STRING to the config file
+            dataset_obj.update_metric(b, "Train #", train_display)
+            dataset_obj.update_metric(b, "Test #", test_display)
+            
+            # Keep saving raw numbers for other metrics
+            dataset_obj.update_metric(b, "F1 Score", f1)
+            dataset_obj.update_metric(b, "Recall", recall)
+            dataset_obj.update_metric(b, "Precision", precision)
+            # ... (we can optionally remove the now-redundant raw count saving)
+
+            # Send all new values to the live UI via Eel
+            eel.updateMetricsOnPage(dataset_name, b, "F1 Score", f1, "none")()
+            eel.updateMetricsOnPage(dataset_name, b, "Recall", recall, "none")()
+            eel.updateMetricsOnPage(dataset_name, b, "Precision", precision, "none")()
+            eel.updateMetricsOnPage(dataset_name, b, "Train #", train_data, "none")()
+            eel.updateMetricsOnPage(dataset_name, b, "Test #", test_data, "none")()
     
     def get_id(self):
         if hasattr(self, "_thread_id"): return self._thread_id

@@ -14,21 +14,15 @@ function update_log_panel(message) {
     if (!logContainer) return;
 
     // --- Logic for sessionStorage ---
-    // 1. Get current history or initialize a new array
     let logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
-    // 2. Add the new message
     logHistory.push(message);
-    // 3. Keep the history from growing indefinitely (e.g., last 500 messages)
     while (logHistory.length > 500) {
         logHistory.shift();
     }
-    // 4. Save the updated history back to sessionStorage
     sessionStorage.setItem('logHistory', JSON.stringify(logHistory));
     // --- End of sessionStorage logic ---
 
-    // Now, render the new message to the screen
     renderLogMessage(message, logContainer);
-    // Auto-scroll to the bottom
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
@@ -54,14 +48,12 @@ function renderLogMessage(message, container) {
 }
 
 
-// Attach event listener for the clear log button and to load history on page start
 document.addEventListener('DOMContentLoaded', () => {
     const logContainer = document.getElementById('log-panel-content');
     if (logContainer) {
-        // Load history from sessionStorage on page load
         const logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
         logHistory.forEach(msg => renderLogMessage(msg, logContainer));
-        logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom after loading
+        logContainer.scrollTop = logContainer.scrollHeight;
     }
     
     const clearBtn = document.getElementById('clear-log-btn');
@@ -69,7 +61,6 @@ document.addEventListener('DOMContentLoaded', () => {
         clearBtn.addEventListener('click', () => {
             if (logContainer) {
                 logContainer.innerHTML = '';
-                // Also clear the stored history
                 sessionStorage.setItem('logHistory', '[]'); 
                 update_log_panel('Log cleared.');
             }
@@ -82,23 +73,13 @@ document.addEventListener('DOMContentLoaded', () => {
 // GLOBAL STATE & VARIABLES
 // =================================================================
 
-/** Flag to prevent `kill_streams` from being called during intentional page navigation. */
 let routingInProgress = false;
-/** True if the labeling interface is active, enabling keyboard shortcuts. */
 let labelingInterfaceActive = false;
-/** Navigation speed multiplier for arrow keys during labeling. */
 let scrubSpeedMultiplier = 1;
-
-/** Debounce timer for confidence filter */ 
 let confidenceFilterDebounceTimer;
-
-/**
- * Stores the directory tree for recordings, populated when a modal needs it.
- * @type {Object<string, string[]>}
- */
 let recordingDirTree = {};
+let selectedVideoPathsForImport = [];
 
-// --- Bootstrap Modal Instances ---
 const addDatasetModalElement = document.getElementById('addDataset');
 const trainModalElement = document.getElementById('trainModal');
 const inferenceModalElement = document.getElementById('inferenceModal');
@@ -113,7 +94,6 @@ let inferenceBsModal = inferenceModalElement ? new bootstrap.Modal(inferenceModa
 let generalErrorBsModal = errorModalElement ? new bootstrap.Modal(errorModalElement) : null;
 let preLabelBsModal = preLabelModalElement ? new bootstrap.Modal(preLabelModalElement) : null;
 let importVideosBsModal = importVideosModalElement ? new bootstrap.Modal(importVideosModalElement) : null;
-let selectedVideoPathsForImport = [];
 let manageDatasetBsModal = manageDatasetModalElement ? new bootstrap.Modal(manageDatasetModalElement) : null;
 
 // =================================================================
@@ -124,11 +104,6 @@ function routeToRecordPage() { routingInProgress = true; window.location.href = 
 function routeToLabelTrainPage() { routingInProgress = true; window.location.href = './label-train.html'; }
 function routeToVisualizePage() { routingInProgress = true; window.location.href = './visualize.html'; }
 
-/**
- * Determines if text should be black or white for good contrast against a background color.
- * @param {string} hexColor - The background color in hex format (e.g., "#RRGGBB").
- * @returns {string} '#000000' (black) or '#FFFFFF' (white).
- */
 function getTextColorForBg(hexColor) {
     if (!hexColor) return '#000000';
     const cleanHex = hexColor.startsWith('#') ? hexColor.slice(1) : hexColor;
@@ -142,51 +117,66 @@ function getTextColorForBg(hexColor) {
 
 function showManageDatasetModal(datasetName) {
     if (!manageDatasetBsModal) return;
-
-    // Set the dataset name in the modal title
     document.getElementById('md-dataset-name').innerText = datasetName;
-
-    // Find the "Reveal" button and attach the correct Eel call to it
     const revealBtn = document.getElementById('revealFilesButton');
     if (revealBtn) {
-        // We set the onclick here to ensure it always has the correct datasetName
         revealBtn.onclick = () => {
             eel.reveal_dataset_files(datasetName)();
-            manageDatasetBsModal.hide(); // Hide modal after clicking
+            manageDatasetBsModal.hide();
         };
     }
-    
     manageDatasetBsModal.show();
 }
+
+/**
+ * Creates the styled HTML for a table cell that displays both instance and frame counts.
+ * It intelligently applies coloring and tooltips based on imbalance status.
+ * @param {object} data - The structured data object from Python.
+ * @returns {string} The complete HTML for the table cell's content.
+ */
+function createCountCellHTML(data) {
+    if (!data || typeof data.inst === 'undefined') {
+        return data || 'N/A';
+    }
+
+    let instHtml = `${data.inst}`;
+    let frameHtml = `(${data.frame})`;
+    let instTooltip = 'Instances';
+    let frameTooltip = 'Frames';
+
+    if (data.inst_status === 'low') {
+        instHtml = `<span class="text-danger fw-bold">${data.inst}</span>`;
+        instTooltip = 'Warning: Low instance count.';
+    } else if (data.inst_status === 'high') {
+        instHtml = `<span class="text-info fw-bold">${data.inst}</span>`;
+        instTooltip = 'Note: High instance count.';
+    }
+
+    if (data.frame_status === 'low') {
+        frameHtml = `<span class="text-danger fw-bold">(${data.frame})</span>`;
+        frameTooltip = 'Warning: Low frame count.';
+    }
+
+    return `<span title="${instTooltip}">${instHtml}</span> <span title="${frameTooltip}">${frameHtml}</span>`;
+}
+
 
 // =================================================================
 // EEL-EXPOSED FUNCTIONS (Called FROM Python)
 // =================================================================
 
-/**
- * Called by the Python backend after the background import task is complete.
- * @param {boolean} success - Whether the import succeeded.
- * @param {string} message - A success or error message.
- */
 eel.expose(notify_import_complete);
 function notify_import_complete(success, message) {
-    // Always hide the spinner
     document.getElementById('cover-spin').style.visibility = 'hidden';
-
     if (success) {
         console.log("Import complete, refreshing dataset list.");
-        // Refresh the UI to show the new recording session
         loadInitialDatasetCards();
-        // Optional: Show a temporary success "toast" notification instead of an alert.
-        // For now, an alert is simple and effective.
         alert(message);
     } else {
-        // Show a detailed error message from the backend
         showErrorOnLabelTrainPage(message);
     }
 }
 
-/** Shows the general error modal with a custom message. */
 eel.expose(showErrorOnLabelTrainPage);
 function showErrorOnLabelTrainPage(message) {
     const errorMessageElement = document.getElementById("error-message");
@@ -194,11 +184,10 @@ function showErrorOnLabelTrainPage(message) {
         errorMessageElement.innerText = message;
         generalErrorBsModal.show();
     } else {
-        alert(message); // Fallback
+        alert(message);
     }
 }
 
-/** Updates the labeling image source with a new base64 encoded frame. */
 eel.expose(updateLabelImageSrc);
 function updateLabelImageSrc(mainFrameBlob, timelineBlob, zoomBlob) {
     const mainFrameImg = document.getElementById('label-image');
@@ -206,37 +195,23 @@ function updateLabelImageSrc(mainFrameBlob, timelineBlob, zoomBlob) {
     const zoomImg = document.getElementById('zoom-bar-image');
     const blankGif = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
 
-    if (mainFrameImg) {
-        mainFrameImg.src = mainFrameBlob ? "data:image/jpeg;base64," + mainFrameBlob : "assets/noVideo.png";
-    }
-    
-    if (fullTimelineImg) {
-        fullTimelineImg.src = timelineBlob ? "data:image/jpeg;base64," + timelineBlob : blankGif;
-    }
-    
-    // The zoom bar is now always visible, so we just update its source.
-    if (zoomImg) {
-        zoomImg.src = zoomBlob ? "data:image/jpeg;base64," + zoomBlob : blankGif;
-    }
+    if (mainFrameImg) mainFrameImg.src = mainFrameBlob ? "data:image/jpeg;base64," + mainFrameBlob : "assets/noVideo.png";
+    if (fullTimelineImg) fullTimelineImg.src = timelineBlob ? "data:image/jpeg;base64," + timelineBlob : blankGif;
+    if (zoomImg) zoomImg.src = zoomBlob ? "data:image/jpeg;base64," + zoomBlob : blankGif;
 }
 
-/** Updates the file path information at the top of the labeling UI. */
 eel.expose(updateFileInfo);
 function updateFileInfo(filenameStr) {
     const elem = document.getElementById('file-info');
     if (elem) elem.innerText = filenameStr || "No video loaded";
 }
 
-/** Updates behavior instance/frame counts in the labeling UI side panel. */
 eel.expose(updateLabelingStats);
 function updateLabelingStats(behaviorName, instanceCount, frameCount) {
     const elem = document.getElementById(`controls-${behaviorName}-count`);
-    if (elem) {
-        elem.innerHTML = `${instanceCount} / ${frameCount}`;
-    }
+    if (elem) elem.innerHTML = `${instanceCount} / ${frameCount}`;
 }
 
-/** Updates displayed metrics for a dataset on the main dataset list page. */
 eel.expose(updateMetricsOnPage);
 function updateMetricsOnPage(datasetName, behaviorName, metricGroupKey, metricValue) {
     const idSuffixMap = {
@@ -249,16 +224,20 @@ function updateMetricsOnPage(datasetName, behaviorName, metricGroupKey, metricVa
     const suffix = idSuffixMap[metricGroupKey];
     if (!suffix) return;
     const elem = document.getElementById(`${datasetName}-${behaviorName}-${suffix}`);
-    if (elem) {
+    if (!elem) return;
+
+    if (typeof metricValue === 'object' && metricValue !== null) {
+        elem.innerHTML = createCountCellHTML(metricValue);
+    } else {
         elem.innerText = metricValue;
-        elem.classList.add('bg-success', 'text-white');
-        setTimeout(() => {
-            elem.classList.remove('bg-success', 'text-white');
-        }, 2000);
     }
+
+    elem.classList.add('bg-success', 'text-white');
+    setTimeout(() => {
+        elem.classList.remove('bg-success', 'text-white');
+    }, 2000);
 }
 
-/** Updates the training status message for a dataset card. */
 eel.expose(updateTrainingStatusOnUI);
 function updateTrainingStatusOnUI(datasetName, message) {
     const statusElem = document.getElementById(`dataset-status-${datasetName}`);
@@ -268,16 +247,15 @@ function updateTrainingStatusOnUI(datasetName, message) {
     }
 }
 
-/** Updates the dataset loading progress bar during training prep. */
 eel.expose(updateDatasetLoadProgress);
 function updateDatasetLoadProgress(datasetName, percent) {
     const container = document.getElementById(`progress-container-${datasetName}`);
     const bar = document.getElementById(`progress-bar-${datasetName}`);
     if (!container || !bar) return;
 
-    if (percent < 0) { // Error signal
+    if (percent < 0) {
         container.style.display = 'none';
-    } else if (percent >= 100) { // Completion signal
+    } else if (percent >= 100) {
         bar.style.width = '100%';
         bar.innerText = 'Loaded!';
         setTimeout(() => {
@@ -285,7 +263,7 @@ function updateDatasetLoadProgress(datasetName, percent) {
             bar.style.width = '0%';
             bar.innerText = '';
         }, 1500);
-    } else { // In-progress
+    } else {
         container.style.display = 'block';
         const displayPercent = Math.round(percent);
         bar.style.width = `${displayPercent}%`;
@@ -293,7 +271,6 @@ function updateDatasetLoadProgress(datasetName, percent) {
     }
 }
 
-/** Dynamically builds the main behavior panel in the labeling UI. */
 eel.expose(buildLabelingUI);
 function buildLabelingUI(behaviors, colors) {
     labelingInterfaceActive = true;
@@ -332,12 +309,8 @@ function buildLabelingUI(behaviors, colors) {
         confidenceSlider.value = 100;
         sliderValueDisplay.textContent = '100%';
     }	
-	
 }
 
-// In frontend/js/label_train_page.js
-
-/** Sets the UI mode for labeling (scratch vs. review) and updates controls text. */
 eel.expose(setLabelingModeUI);
 function setLabelingModeUI(mode, modelName = '') {
     const controlsHeader = document.querySelector('#controls .card-header');
@@ -345,7 +318,6 @@ function setLabelingModeUI(mode, modelName = '') {
     if (!controlsHeader || !cheatSheet) return;
 
     if (mode === 'review') {
-        // --- CONFIGURE FOR REVIEW MODE ---
         controlsHeader.classList.remove('bg-dark');
         controlsHeader.classList.add('bg-success');
         controlsHeader.querySelector('h5').innerHTML = `Reviewing: <span class="badge bg-light text-dark">${modelName}</span>`;
@@ -415,7 +387,6 @@ function setLabelingModeUI(mode, modelName = '') {
             </div>`;
     }
 
-    // After rebuilding the HTML, we must re-attach the event listener for the slider
     const confidenceSlider = document.getElementById('confidence-slider');
     const sliderValueDisplay = document.getElementById('slider-value-display');
     const resetSliderBtn = document.getElementById('reset-slider-btn');
@@ -425,11 +396,7 @@ function setLabelingModeUI(mode, modelName = '') {
         confidenceSlider.addEventListener('input', function() {
             sliderValueDisplay.textContent = `${this.value}%`;
             if (timelineContainer) {
-                if (parseInt(this.value) < 100) {
-                    timelineContainer.classList.add('timeline-filtered');
-                } else {
-                    timelineContainer.classList.remove('timeline-filtered');
-                }
+                timelineContainer.classList.toggle('timeline-filtered', parseInt(this.value) < 100);
             }
             clearTimeout(confidenceFilterDebounceTimer);
             confidenceFilterDebounceTimer = setTimeout(() => {
@@ -451,7 +418,6 @@ function setLabelingModeUI(mode, modelName = '') {
     }
 }
 
-/** Highlights the specified row in the behavior panel. */
 eel.expose(highlightBehaviorRow);
 function highlightBehaviorRow(behaviorNameToHighlight) {
     document.querySelectorAll('#controls .list-group-item').forEach(row => {
@@ -460,18 +426,15 @@ function highlightBehaviorRow(behaviorNameToHighlight) {
     if (behaviorNameToHighlight) {
         const behaviorSpans = document.querySelectorAll('#controls .list-group-item span:first-child');
         const targetSpan = Array.from(behaviorSpans).find(span => span.textContent === behaviorNameToHighlight);
-        if (targetSpan) {
-            targetSpan.closest('.list-group-item')?.classList.add('highlight-selected');
-        }
+        targetSpan?.closest('.list-group-item')?.classList.add('highlight-selected');
     }
 }
 
 eel.expose(updateConfidenceBadge);
 function updateConfidenceBadge(behaviorName, confidence) {
-    // First, clear all existing badges
     document.querySelectorAll('.confidence-badge-placeholder').forEach(el => el.innerHTML = '');
 
-    if (behaviorName && confidence !== null) {
+    if (behaviorName && confidence !== null && typeof confidence !== 'undefined') {
         const rowId = `behavior-row-${behaviorName.replace(/[\W_]+/g, '-')}`;
         const row = document.getElementById(rowId);
         if (!row) return;
@@ -479,40 +442,32 @@ function updateConfidenceBadge(behaviorName, confidence) {
         const placeholder = row.querySelector('.confidence-badge-placeholder');
         if (!placeholder) return;
 
-        let badgeClass = 'bg-secondary';
-        if (confidence >= 0.9) {
-            badgeClass = 'bg-success'; // High confidence
-        } else if (confidence >= 0.7) {
-            badgeClass = 'bg-warning text-dark'; // Medium confidence
-        } else {
-            badgeClass = 'bg-danger'; // Low confidence
-        }
+        let badgeClass = 'bg-danger';
+        if (confidence >= 0.9) badgeClass = 'bg-success';
+        else if (confidence >= 0.7) badgeClass = 'bg-warning text-dark';
 
         const confidencePercent = (confidence * 100).toFixed(0);
         placeholder.innerHTML = `<span class="badge ${badgeClass}">${confidencePercent}%</span>`;
     }
 }
 
-// Eel-exposed function to just handle VISUALS
 eel.expose(setConfirmationModeUI);
 function setConfirmationModeUI(isConfirming) {
     const commitBtn = document.getElementById('save-labels-btn');
     const cancelBtn = document.getElementById('cancel-commit-btn');
-    
     if (!commitBtn || !cancelBtn) return;
 
     if (isConfirming) {
         commitBtn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Confirm & Save';
-        commitBtn.classList.remove('btn-success');
-        commitBtn.classList.add('btn-primary');
+        commitBtn.classList.replace('btn-success', 'btn-primary');
         cancelBtn.style.display = 'inline-block';
     } else {
         commitBtn.innerHTML = '<i class="bi bi-save-fill me-2"></i>Commit Corrections';
-        commitBtn.classList.remove('btn-primary');
-        commitBtn.classList.add('btn-success');
+        commitBtn.classList.replace('btn-primary', 'btn-success');
         cancelBtn.style.display = 'none';
     }
 }
+
 
 // =================================================================
 // UI INTERACTION & EVENT HANDLERS (Called FROM HTML)
@@ -522,122 +477,103 @@ function jumpToFrame() {
     const input = document.getElementById('frame-jump-input');
     if (input && input.value) {
         const frameNum = parseInt(input.value);
-        if (!isNaN(frameNum)) {
-            eel.jump_to_frame(frameNum)();
-        }
+        if (!isNaN(frameNum)) eel.jump_to_frame(frameNum)();
     }
 }
-// State machine function called by the main button
+
 function handleCommitClick() {
     const commitBtn = document.getElementById('save-labels-btn');
-    // Check the button's current text to determine the state
     if (commitBtn.innerText.includes("Commit Corrections")) {
-        // If it's in the initial state, call the staging function
         eel.stage_for_commit()();
     } else {
-        // Otherwise, it's in confirmation mode, so show the dialog and save
         if (confirm("Are you sure you want to commit these verified labels? This will overwrite previous labels for this video file.")) {
             eel.save_session_labels()();
         }
     }
 }
-/** Jumps to the next or previous labeled instance in the video. */
+
 function jumpToInstance(direction) {
     eel.jump_to_instance(direction)();
 }
 
-/** Opens the 'Labeling Options' modal and populates its fields. */
 async function showPreLabelOptions(datasetName) {
-    // --- 1. Get references to all modal elements ---
     const modelSelect = document.getElementById('pl-model-select');
     const sessionSelect = document.getElementById('pl-session-select');
     const videoSelect = document.getElementById('pl-video-select');
     const infoDiv = document.getElementById('pl-behavior-match-info');
 
-    // --- 2. Reset the modal to its initial state ---
     document.getElementById('pl-dataset-name').innerText = datasetName;
     modelSelect.innerHTML = '<option selected disabled>Loading...</option>';
     sessionSelect.innerHTML = '<option selected disabled>First, choose a model...</option>';
     videoSelect.innerHTML = '<option selected disabled>First, choose a session...</option>';
     infoDiv.innerHTML = '';
-    modelSelect.disabled = true;
-    sessionSelect.disabled = true;
-    videoSelect.disabled = true;
+    [modelSelect, sessionSelect, videoSelect].forEach(el => el.disabled = true);
 
-    // --- 3. Fetch all necessary data from Python backend ---
-    const allDatasetConfigs = await eel.load_dataset_configs()();
-    const allModelConfigs = await eel.get_model_configs()();
-    const allModels = await eel.get_available_models()();
-    
-    const targetDatasetConfig = allDatasetConfigs[datasetName];
-    if (!targetDatasetConfig || !targetDatasetConfig.behaviors) {
-        showErrorOnLabelTrainPage(`Could not load behaviors for dataset '${datasetName}'.`);
-        return;
-    }
-    const targetBehaviors = new Set(targetDatasetConfig.behaviors);
+    try {
+        const [allDatasetConfigs, allModelConfigs, allModels] = await Promise.all([
+            eel.load_dataset_configs()(),
+            eel.get_model_configs()(),
+            eel.get_available_models()()
+        ]);
 
-    // --- 4. Populate the first dropdown with compatible models ---
-    let compatibleModels = [];
-    if (allModels && allModelConfigs) {
-        allModels.forEach(modelName => {
+        const targetDatasetConfig = allDatasetConfigs[datasetName];
+        if (!targetDatasetConfig?.behaviors) {
+            showErrorOnLabelTrainPage(`Could not load behaviors for dataset '${datasetName}'.`);
+            return;
+        }
+        const targetBehaviors = new Set(targetDatasetConfig.behaviors);
+        
+        const compatibleModels = allModels.filter(modelName => {
             const modelConfig = allModelConfigs[modelName];
-            if (modelConfig && modelConfig.behaviors) {
-                const modelBehaviors = new Set(modelConfig.behaviors);
-                if ([...targetBehaviors].some(b => modelBehaviors.has(b))) {
-                    compatibleModels.push(modelName);
-                }
-            }
+            if (!modelConfig?.behaviors) return false;
+            const modelBehaviors = new Set(modelConfig.behaviors);
+            return [...targetBehaviors].some(b => modelBehaviors.has(b));
         });
+
+        if (compatibleModels.length > 0) {
+            modelSelect.innerHTML = '<option selected disabled>Choose a model...</option>' + compatibleModels.map(name => `<option value="${name}">${name}</option>`).join('');
+            modelSelect.disabled = false;
+        } else {
+            modelSelect.innerHTML = '<option selected disabled>No compatible models found</option>';
+        }
+    } catch (e) {
+        showErrorOnLabelTrainPage("Error preparing labeling options: " + e.message);
     }
 
-    // --- 5. Update the UI based on whether compatible models were found ---
-    if (compatibleModels.length > 0) {
-        modelSelect.innerHTML = '<option selected disabled>Choose a model...</option>';
-        compatibleModels.forEach(name => modelSelect.innerHTML += `<option value="${name}">${name}</option>`);
-        modelSelect.disabled = false;
-    } else {
-        modelSelect.innerHTML = '<option selected disabled>No compatible models found</option>';
-    }
-
-    // --- 6. Show the modal ---
     preLabelBsModal.show();
 }
 
-// --- Event listeners need to be attached ONCE when the page loads ---
 async function onModelSelectChange(event) {
     const modelName = event.target.value;
     const datasetName = document.getElementById('pl-dataset-name').innerText;
     
-    // --- UI Nudging ---
     const infoDiv = document.getElementById('pl-behavior-match-info');
-    infoDiv.innerHTML = ''; // Clear previous
-    const allModelConfigs = await eel.get_model_configs()(); // Re-fetch or pass down
-    const allDatasetConfigs = await eel.load_dataset_configs()();
-    const targetBehaviors = new Set(allDatasetConfigs[datasetName].behaviors);
-    const modelConfig = allModelConfigs[modelName];
+    infoDiv.innerHTML = '';
+    try {
+        const [allModelConfigs, allDatasetConfigs] = await Promise.all([eel.get_model_configs()(), eel.load_dataset_configs()()]);
+        const targetBehaviors = new Set(allDatasetConfigs[datasetName].behaviors);
+        const modelConfig = allModelConfigs[modelName];
 
-    if (modelConfig && modelConfig.behaviors) {
-        const modelBehaviors = new Set(modelConfig.behaviors);
-        const matching = [...targetBehaviors].filter(b => modelBehaviors.has(b)).join(', ');
-        const nonMatching = [...targetBehaviors].filter(b => !modelBehaviors.has(b)).join(', ');
-        infoDiv.innerHTML = `Will pre-label for: <strong>${matching}</strong>.`;
-        if (nonMatching) {
-            infoDiv.innerHTML += `<br><span class="text-warning">Will ignore: ${nonMatching}</span>`;
+        if (modelConfig?.behaviors) {
+            const modelBehaviors = new Set(modelConfig.behaviors);
+            const matching = [...targetBehaviors].filter(b => modelBehaviors.has(b)).join(', ');
+            const nonMatching = [...targetBehaviors].filter(b => !modelBehaviors.has(b)).join(', ');
+            infoDiv.innerHTML = `Will pre-label for: <strong>${matching}</strong>.`;
+            if (nonMatching) infoDiv.innerHTML += `<br><span class="text-warning">Will ignore: ${nonMatching}</span>`;
         }
-    }
+    } catch(e) { console.error(e); }
 
-    // --- Populate Session Dropdown ---
     const sessionSelect = document.getElementById('pl-session-select');
-    sessionSelect.disabled = false;
+    sessionSelect.disabled = true;
     sessionSelect.innerHTML = '<option>Loading sessions...</option>';
     const sessions = await eel.get_inferred_session_dirs(datasetName, modelName)();
     
     sessionSelect.innerHTML = '<option selected disabled>Choose a session...</option>';
-    if (sessions && sessions.length > 0) {
+    if (sessions?.length > 0) {
         sessions.forEach(dir => sessionSelect.innerHTML += `<option value="${dir}">${dir}</option>`);
+        sessionSelect.disabled = false;
     } else {
         sessionSelect.innerHTML = '<option selected disabled>No inferred sessions</option>';
-        sessionSelect.disabled = true;
     }
 }
 
@@ -646,85 +582,66 @@ async function onSessionSelectChange(event) {
     const modelName = document.getElementById('pl-model-select').value;
     const videoSelect = document.getElementById('pl-video-select');
 
-    videoSelect.disabled = false;
+    videoSelect.disabled = true;
     videoSelect.innerHTML = '<option>Loading videos...</option>';
     const videos = await eel.get_inferred_videos_for_session(sessionDir, modelName)();
 
     videoSelect.innerHTML = '<option selected disabled>Choose a video...</option>';
-    if (videos && videos.length > 0) {
+    if (videos?.length > 0) {
         videos.forEach(v => videoSelect.innerHTML += `<option value="${v[0]}">${v[1]}</option>`);
+        videoSelect.disabled = false;
     } else {
         videoSelect.innerHTML = '<option selected disabled>No videos found</option>';
-        videoSelect.disabled = true;
     }
 }
 
-/** Triggers a backend refresh of all project data and re-renders the dataset cards. */
 async function refreshAllDatasets() {
     console.log("Refreshing datasets from disk...");
-    const spinner = document.getElementById('cover-spin');
-    if (spinner) spinner.style.visibility = 'visible';
-
+    document.getElementById('cover-spin').style.visibility = 'visible';
     try {
-        // Call a new, simple backend function to trigger a project-wide reload
         await eel.reload_project_data()();
-        
-        // Now, simply call the existing function to redraw the UI with the new data
         await loadInitialDatasetCards();
     } catch (error) {
         console.error("Failed to refresh datasets:", error);
         showErrorOnLabelTrainPage("An error occurred while trying to refresh the datasets.");
     } finally {
-        if (spinner) spinner.style.visibility = 'hidden';
+        document.getElementById('cover-spin').style.visibility = 'hidden';
     }
 }
 
-/** Modifies the 'Labeling Options' modal for the "Start From Scratch" workflow. */
 async function showVideoSelectionForScratch() {
     const datasetName = document.getElementById('pl-dataset-name').innerText;
-    const modelLabel = document.querySelector('label[for="pl-model-select"]');
-    const modelSelect = document.getElementById('pl-model-select');
-    const sessionLabel = document.querySelector('label[for="pl-session-select"]');
-    const sessionSelect = document.getElementById('pl-session-select');
+    document.querySelector('label[for="pl-model-select"]').style.display = 'none';
+    document.getElementById('pl-model-select').style.display = 'none';
+    document.querySelector('label[for="pl-session-select"]').style.display = 'none';
+    document.getElementById('pl-session-select').style.display = 'none';
+    document.querySelector('#preLabelModal .btn-outline-primary').style.display = 'none';
+    document.querySelector('#preLabelModal p.text-center').style.display = 'none';
+
     const mainButton = document.querySelector('#preLabelModal .btn-outline-success');
-    const scratchButton = document.querySelector('#preLabelModal .btn-outline-primary');
-    const videoSelect = document.getElementById('pl-video-select');
-    const prelabelHeader = document.querySelector('#preLabelModal p.text-center');
-
-    // Reconfigure UI for scratch workflow
-    if (modelLabel) modelLabel.style.display = 'none';
-    if (modelSelect) modelSelect.style.display = 'none';
-    if (sessionLabel) sessionLabel.style.display = 'none';
-    if (sessionSelect) sessionSelect.style.display = 'none';
-    if (scratchButton) scratchButton.style.display = 'none';
-    if (prelabelHeader) prelabelHeader.style.display = 'none';
-
-    if (mainButton) {
-        mainButton.innerHTML = '<i class="bi bi-pen me-2"></i>Label Selected Video';
-        mainButton.onclick = function() {
-            const videoPath = videoSelect.value;
-            if (!videoPath || videoPath.includes("...")) {
-                showErrorOnLabelTrainPage("Please select a video to label.");
-                return;
-            }
-            if (preLabelBsModal) preLabelBsModal.hide();
-            prepareAndShowLabelModal(datasetName, videoPath);
-        };
-    }
+    mainButton.innerHTML = '<i class="bi bi-pen me-2"></i>Label Selected Video';
+    mainButton.onclick = function() {
+        const videoPath = document.getElementById('pl-video-select').value;
+        if (!videoPath || videoPath.includes("...")) {
+            showErrorOnLabelTrainPage("Please select a video to label.");
+            return;
+        }
+        preLabelBsModal?.hide();
+        prepareAndShowLabelModal(datasetName, videoPath);
+    };
     
-    // Populate video dropdown
+    const videoSelect = document.getElementById('pl-video-select');
     videoSelect.disabled = false;
     videoSelect.innerHTML = '<option>Loading videos...</option>';
     const videos = await eel.get_videos_for_dataset(datasetName)();
     videoSelect.innerHTML = '<option selected disabled>Choose a video...</option>';
-    if (videos && videos.length > 0) {
+    if (videos?.length > 0) {
         videos.forEach(v => videoSelect.innerHTML += `<option value="${v[0]}">${v[1]}</option>`);
     } else {
         videoSelect.innerHTML = '<option>No videos found in dataset</option>';
     }
 }
 
-/** Kicks off the pre-labeling workflow. */
 async function startPreLabeling() {
     const datasetName = document.getElementById('pl-dataset-name').innerText;
     const modelName = document.getElementById('pl-model-select').value;
@@ -733,53 +650,40 @@ async function startPreLabeling() {
     if (!modelName || modelName.includes("...")) { showErrorOnLabelTrainPage("Please select a model."); return; }
     if (!videoPath || videoPath.includes("...")) { showErrorOnLabelTrainPage("Please select a video."); return; }
 
-    if (preLabelBsModal) preLabelBsModal.hide();
-    const loadingSpinner = document.getElementById('loading-spinner-general'); // Needs to exist in HTML
-    if (loadingSpinner) loadingSpinner.style.display = 'block';
+    preLabelBsModal?.hide();
+    document.getElementById('cover-spin').style.visibility = 'visible';
 
     try {
         const success = await eel.start_labeling_with_preload(datasetName, modelName, videoPath)();
-        if (!success) {
-            showErrorOnLabelTrainPage("Pre-labeling failed. The backend task could not be started.");
-        }
+        if (!success) showErrorOnLabelTrainPage("Pre-labeling failed. The backend task could not be started.");
     } catch (e) {
         showErrorOnLabelTrainPage(`An error occurred: ${e.message || e}`);
     } finally {
-        if (loadingSpinner) loadingSpinner.style.display = 'none';
+        document.getElementById('cover-spin').style.visibility = 'hidden';
     }
 }
 
-/** Initiates the labeling UI for a specific video, starting from scratch. */
 async function prepareAndShowLabelModal(datasetName, videoToOpen) {
     try {
         const success = await eel.start_labeling(datasetName, videoToOpen, null)();
-        if (!success) {
-            showErrorOnLabelTrainPage('Backend failed to start the labeling task.');
-        }
+        if (!success) showErrorOnLabelTrainPage('Backend failed to start the labeling task.');
     } catch (error) {
         showErrorOnLabelTrainPage(`Error initializing labeling interface: ${error.message || 'Unknown error'}`);
     }
 }
 
-
-// =================================================================
-// DATASET & MODEL MANAGEMENT FUNCTIONS
-// =================================================================
-
-/** Starts the import process */
 async function showImportVideosDialog() {
     if (!window.electronAPI) {
         showErrorOnLabelTrainPage("The file system API is not available.");
         return;
     }
     try {
-        // Use 'invoke' to get the file paths back directly from the main process
         const filePaths = await window.electronAPI.invoke('show-open-video-dialog');
-
-        if (filePaths && filePaths.length > 0) {
+        if (filePaths?.length > 0) {
             selectedVideoPathsForImport = filePaths;
             document.getElementById('import-file-count').textContent = filePaths.length;
-            document.getElementById('import-session-name').value = ''; // Clear previous
+            document.getElementById('import-session-name').value = '';
+            document.getElementById('import-subject-name').value = '';
             importVideosBsModal?.show();
         } else {
             console.log("User cancelled video selection.");
@@ -789,11 +693,11 @@ async function showImportVideosDialog() {
     }
 }
 
-/** Handles the modal submission */
 async function handleImportSubmit() {
     const sessionName = document.getElementById('import-session-name').value;
-    if (!sessionName.trim()) {
-        showErrorOnLabelTrainPage("Session Name cannot be empty.");
+    const subjectName = document.getElementById('import-subject-name').value;
+    if (!sessionName.trim() || !subjectName.trim()) {
+        showErrorOnLabelTrainPage("Session Name and Subject Name cannot be empty.");
         return;
     }
     if (selectedVideoPathsForImport.length === 0) {
@@ -802,22 +706,16 @@ async function handleImportSubmit() {
     }
 
     importVideosBsModal?.hide();
-    // Show the spinner. It will be hidden by the backend notification later.
     document.getElementById('cover-spin').style.visibility = 'visible';
 
     try {
-        // This will now return almost instantly
-        await eel.import_videos(sessionName, selectedVideoPathsForImport)();
-        // We no longer check for success here, as the real work is in the background.
-        // We also DO NOT hide the spinner here.
+        await eel.import_videos(sessionName, subjectName, selectedVideoPathsForImport)();
     } catch (error) {
-        // If the task couldn't even be started, hide spinner and show error.
         showErrorOnLabelTrainPage("An error occurred while trying to start the import task: " + error.message);
         document.getElementById('cover-spin').style.visibility = 'hidden';
     }
 }
 
-/** Populates and shows the "Add Dataset" modal. */
 async function showAddDatasetModal() {
     try {
         const treeContainer = document.getElementById('ad-recording-tree');
@@ -843,7 +741,6 @@ async function showAddDatasetModal() {
     }
 }
 
-/** Submits the form to create a new dataset. */
 async function submitCreateDataset() {
     const selectedRecordings = [];
     Object.keys(recordingDirTree).forEach(dir => {
@@ -879,14 +776,12 @@ async function submitCreateDataset() {
     }
 }
 
-/** Populates and shows the training modal. */
 function showTrainModal(datasetName) {
     const tmDatasetElement = document.getElementById('tm-dataset');
     if (tmDatasetElement) tmDatasetElement.innerText = datasetName;
     trainBsModal?.show();
 }
 
-/** Submits the training job to the backend. */
 async function submitTrainModel() {
     const datasetName = document.getElementById('tm-dataset').innerText;
     const batchSize = document.getElementById('tm-batchsize').value;
@@ -902,7 +797,6 @@ async function submitTrainModel() {
     trainBsModal?.hide();
 }
 
-/** Populates and shows the inference modal. */
 async function showInferenceModal(datasetName) {
     const imDatasetElem = document.getElementById('im-dataset');
     if (imDatasetElem) imDatasetElem.innerText = datasetName;
@@ -928,7 +822,6 @@ async function showInferenceModal(datasetName) {
     }
 }
 
-/** Submits the job to start classification (inference). */
 async function submitStartClassification() {
     const datasetNameForModel = document.getElementById('im-dataset').innerText;
     const selectedRecs = [];
@@ -953,21 +846,17 @@ async function submitStartClassification() {
     inferenceBsModal?.hide();
 }
 
-
-// =================================================================
-// MAIN APPLICATION LOGIC & EVENT LISTENERS
-// =================================================================
-
-/** Fetches and renders the initial list of dataset cards. */
+/**
+ * Fetches and renders the initial list of dataset cards.
+ */
 async function loadInitialDatasetCards() {
     try {
         const datasets = await eel.load_dataset_configs()();
         const container = document.getElementById('dataset-container');
         if (!container) return;
-        container.className = 'row g-3'; // Add gutter spacing for cards
+        container.className = 'row g-3';
         let htmlContent = '';
 
-        // --- Renders the card for the default JonesLabModel ---
         if (await eel.model_exists("JonesLabModel")()) {
             htmlContent += `
                 <div class="col-md-6 col-lg-4">
@@ -985,24 +874,24 @@ async function loadInitialDatasetCards() {
                 </div>`;
         }
 
-        // --- Renders cards for all user-created datasets ---
         if (datasets) {
             for (const datasetName in datasets) {
-                // Skip rendering a dataset card if it's the default model, as it's handled above
                 if (datasetName === "JonesLabModel") continue;
                 
                 const config = datasets[datasetName];
                 const behaviors = config.behaviors || [];
                 const metrics = config.metrics || {};
                 const modelExists = !!config.model;
-                const metricHeaders = ['Train #', 'Test #', 'Precision', 'Recall', 'F1 Score'];
+                const metricHeaders = [
+                    'Train Inst<br><small>(Frames)</small>', 
+                    'Test Inst<br><small>(Frames)</small>', 
+                    'Precision', 'Recall', 'F1 Score'
+                ];
 
                 htmlContent += `
                     <div class="col-md-6 col-lg-4">
                         <div class="card shadow h-100">
-                            <div class="card-header bg-dark text-white">
-                                <h5 class="card-title mb-0">${datasetName}</h5>
-                            </div>
+                            <div class="card-header bg-dark text-white"><h5 class="card-title mb-0">${datasetName}</h5></div>
                             <div class="card-body" style="font-size: 0.85rem;">`;
 
                 if (behaviors.length > 0) {
@@ -1019,23 +908,28 @@ async function loadInitialDatasetCards() {
 
                     behaviors.forEach(behaviorName => {
                         const bMetrics = metrics[behaviorName] || {};
-                        const idSuffixes = ['train-count', 'test-count', 'precision', 'recall', 'fscore'];
+                        const trainValue = bMetrics['Train #'] ?? 'N/A';
+                        const testValue = bMetrics['Test #'] ?? 'N/A';
+                        const precisionValue = bMetrics['Precision'] ?? 'N/A';
+                        const recallValue = bMetrics['Recall'] ?? 'N/A';
+                        const f1Value = bMetrics['F1 Score'] ?? 'N/A';
+                        
                         htmlContent += `
                             <tr>
                                 <td>${behaviorName}</td>
-                                ${metricHeaders.map((mh, i) => `<td class="text-center" id="${datasetName}-${behaviorName}-${idSuffixes[i]}">${bMetrics[mh] ?? 'N/A'}</td>`).join('')}
+                                <td class="text-center" id="${datasetName}-${behaviorName}-train-count">${trainValue}</td>
+                                <td class="text-center" id="${datasetName}-${behaviorName}-test-count">${testValue}</td>
+                                <td class="text-center" id="${datasetName}-${behaviorName}-precision">${precisionValue}</td>
+                                <td class="text-center" id="${datasetName}-${behaviorName}-recall">${recallValue}</td>
+                                <td class="text-center" id="${datasetName}-${behaviorName}-fscore">${f1Value}</td>
                             </tr>`;
                     });
 
-                    htmlContent += `
-                                </tbody>
-                            </table>
-                        </div>`;
+                    htmlContent += `</tbody></table></div>`;
                 } else {
                     htmlContent += `<p class="text-muted">No behaviors defined yet.</p>`;
                 }
 
-                // Progress bar and status text
                 htmlContent += `
                     <div class="progress mt-2" id="progress-container-${datasetName}" style="height: 20px; display: none;">
                         <div class="progress-bar progress-bar-striped progress-bar-animated" id="progress-bar-${datasetName}" role="progressbar" style="width: 0%;"></div>
@@ -1043,13 +937,11 @@ async function loadInitialDatasetCards() {
                     <div id="dataset-status-${datasetName}" class="mt-2 small text-info"></div>
                 </div>`;
 
-                // Card Footer with all buttons
                 htmlContent += `
                     <div class="card-footer d-flex justify-content-end align-items-center">
                         <button class="btn btn-sm btn-outline-secondary me-auto" type="button" onclick="showManageDatasetModal('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="View dataset files on disk">
                             <i class="bi bi-folder2-open"></i> Manage
                         </button>
-                        
                         <button class="btn btn-sm btn-outline-primary me-1" type="button" onclick="showPreLabelOptions('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="Label videos for this dataset">Label</button>
                         <button class="btn btn-sm btn-outline-success me-1" type="button" onclick="showTrainModal('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="Train a new model with this dataset's labels">Train</button>`;
                 
@@ -1057,17 +949,12 @@ async function loadInitialDatasetCards() {
                     htmlContent += `<button class="btn btn-sm btn-outline-warning" type="button" onclick="showInferenceModal('${datasetName}')" data-bs-toggle="tooltip" data-bs-placement="top" title="Use this dataset's trained model to classify unlabeled videos">Infer</button>`;
                 }
 
-                htmlContent += `
-                            </div>
-                        </div>
-                    </div>`;
+                htmlContent += `</div></div></div>`;
             }
         }
 
-        // Final check and render
         container.innerHTML = htmlContent || "<p class='text-light'>No datasets found. Click '+' to create one.</p>";
 
-        // IMPORTANT: Re-initialize tooltips after updating the DOM
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
         tooltipTriggerList.map(function (tooltipTriggerEl) {
             return new bootstrap.Tooltip(tooltipTriggerEl);
@@ -1078,7 +965,6 @@ async function loadInitialDatasetCards() {
     }
 }
 
-/** Handles timeline scrubbing via mouse drag. */
 function handleMouseMoveForLabelScrub(event) {
     const imageElement = event.target;
     if (!imageElement) return;
@@ -1087,13 +973,11 @@ function handleMouseMoveForLabelScrub(event) {
     eel.handle_click_on_label_image(x, 0)?.();
 }
 
-/** Cleans up timeline scrubbing event listeners. */
 function handleMouseUpForLabelScrub() {
     document.removeEventListener('mousemove', handleMouseMoveForLabelScrub);
     document.removeEventListener('mouseup', handleMouseUpForLabelScrub);
 }
 
-/** Updates child checkboxes state when a parent is clicked. */
 function updateChildrenCheckboxes(parentCheckboxId, isInfModalSuffix = false) {
     const baseParentDirId = isInfModalSuffix ? parentCheckboxId.slice(0, -3) : parentCheckboxId;
     const subdirs = recordingDirTree[baseParentDirId];
@@ -1107,7 +991,6 @@ function updateChildrenCheckboxes(parentCheckboxId, isInfModalSuffix = false) {
     }
 }
 
-/** Waits for the Eel WebSocket to be fully connected before proceeding. */
 function waitForEelConnection() {
     return new Promise(resolve => {
         if (eel._websocket && eel._websocket.readyState === 1) {
@@ -1124,11 +1007,10 @@ function waitForEelConnection() {
 
 // --- Global Event Listeners ---
 
-/** Attaches mousedown listener for timeline scrubbing. */
 const fullTimelineElement = document.getElementById('full-timeline-image');
 if (fullTimelineElement) {
     fullTimelineElement.addEventListener('mousedown', function (event) {
-        const x = event.offsetX; // offsetX is simpler when bound to the element
+        const x = event.offsetX;
         eel.handle_click_on_label_image(x, 0)?.();
         document.addEventListener('mousemove', handleMouseMoveForLabelScrub);
         document.addEventListener('mouseup', handleMouseUpForLabelScrub);
@@ -1144,27 +1026,17 @@ if (zoomBarImageElement) {
     });
 }
 
-/** Global keydown listener for all labeling shortcuts. */
 window.addEventListener("keydown", (event) => {
-    // Ignore key presses if a modal is open or if the labeling UI isn't active
-    if (document.querySelector('.modal.show') || !labelingInterfaceActive || document.getElementById('label')?.style.display !== 'flex') {
-        return;
-    }
+    if (document.querySelector('.modal.show') || !labelingInterfaceActive || document.getElementById('label')?.style.display !== 'flex') return;
 
-    // --- SAVE HOTKEY ---
     if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 's') {
         event.preventDefault(); 
-        const commitBtn = document.getElementById('save-labels-btn');
-        if (commitBtn) {
-            commitBtn.click();
-        }
+        document.getElementById('save-labels-btn')?.click();
         return; 
     }
 
     if (document.activeElement === document.getElementById('frame-jump-input')) {
-        if (event.key === 'Enter') {
-            jumpToFrame();
-        }
+        if (event.key === 'Enter') jumpToFrame();
         return;
     }
     
@@ -1177,67 +1049,36 @@ window.addEventListener("keydown", (event) => {
 
     switch (event.key) {
         case "ArrowLeft":
-            if (event.ctrlKey && event.shiftKey) { 
-                eel.next_video(-1)();
-            } else { // Simplified: All other arrow movements are free.
-                eel.next_frame(-scrubSpeedMultiplier)();
-            }
+            event.ctrlKey && event.shiftKey ? eel.next_video(-1)() : eel.next_frame(-scrubSpeedMultiplier)();
             break;
         case "ArrowRight":
-            if (event.ctrlKey && event.shiftKey) { 
-                eel.next_video(1)();
-            } else { // Simplified: All other arrow movements are free.
-                eel.next_frame(scrubSpeedMultiplier)();
-            }
+            event.ctrlKey && event.shiftKey ? eel.next_video(1)() : eel.next_frame(scrubSpeedMultiplier)();
             break;
-        case "ArrowUp":
-            scrubSpeedMultiplier = Math.min(scrubSpeedMultiplier * 2, 128);
-            break;
-        case "ArrowDown":
-            scrubSpeedMultiplier = Math.max(1, Math.trunc(scrubSpeedMultiplier / 2));
-            break;
-        case "Delete":
-            eel.delete_instance_from_buffer()();
-            break;
-        case "Backspace":
-            eel.pop_instance_from_buffer()();
-            break;
-        case "[":
-            eel.update_instance_boundary('start')();
-            break;
-        case "]":
-            eel.update_instance_boundary('end')();
-            break;
-        case "Enter":
-            eel.confirm_selected_instance()();
-            break;
+        case "ArrowUp": scrubSpeedMultiplier = Math.min(scrubSpeedMultiplier * 2, 128); break;
+        case "ArrowDown": scrubSpeedMultiplier = Math.max(1, Math.trunc(scrubSpeedMultiplier / 2)); break;
+        case "Delete": eel.delete_instance_from_buffer()(); break;
+        case "Backspace": eel.pop_instance_from_buffer()(); break;
+        case "[": eel.update_instance_boundary('start')(); break;
+        case "]": eel.update_instance_boundary('end')(); break;
+        case "Enter": eel.confirm_selected_instance()(); break;
         default:
             let bIdx = -1;
             if (event.keyCode >= 49 && event.keyCode <= 57) bIdx = event.keyCode - 49;
             else if (event.keyCode >= 65 && event.keyCode <= 90) bIdx = event.keyCode - 65 + 9;
-            if (bIdx !== -1) { eel.label_frame(bIdx)(); } else { handled = false; }
+            if (bIdx !== -1) eel.label_frame(bIdx)();
+            else handled = false;
             break;
     }
-
-    if (handled) {
-        event.preventDefault();
-    }
+    if (handled) event.preventDefault();
 });
 
-/** Page unload listeners to ensure Python processes are killed. */
-window.addEventListener("unload", function () {
-    if (!routingInProgress) { eel.kill_streams()?.().catch(err => console.error(err)); }
-});
-window.onbeforeunload = function () {
-    if (!routingInProgress) { eel.kill_streams()?.().catch(err => console.error(err)); }
-};
+window.addEventListener("unload", () => { if (!routingInProgress) eel.kill_streams()?.catch(console.error); });
+window.onbeforeunload = () => { if (!routingInProgress) eel.kill_streams()?.catch(console.error); };
 
-/** Initial page load setup. */
 document.addEventListener('DOMContentLoaded', async () => {
     await waitForEelConnection();
     loadInitialDatasetCards();
 
-    // Assign onclick handlers for modal submission buttons.
     document.getElementById('createDatasetButton')?.addEventListener('click', submitCreateDataset);
     document.getElementById('trainModelButton')?.addEventListener('click', submitTrainModel);
     document.getElementById('startClassificationButton')?.addEventListener('click', submitStartClassification);
@@ -1245,58 +1086,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 	document.getElementById('pl-model-select')?.addEventListener('change', onModelSelectChange);
     document.getElementById('pl-session-select')?.addEventListener('change', onSessionSelectChange);
 
-    const confidenceSlider = document.getElementById('confidence-slider');
-    const sliderValueDisplay = document.getElementById('slider-value-display');
-    if (confidenceSlider && sliderValueDisplay) {
-        confidenceSlider.addEventListener('input', function() {
-            // Update the percentage display immediately
-            sliderValueDisplay.textContent = `${this.value}%`;
-
-			const timelineContainer = document.getElementById('full-timeline-section');
-			if (timelineContainer) {
-				if (parseInt(this.value) < 100) {
-					timelineContainer.classList.add('timeline-filtered');
-				} else {
-					timelineContainer.classList.remove('timeline-filtered');
-				}
-			}
-
-            // Debounce the call to the backend
-            clearTimeout(confidenceFilterDebounceTimer);
-            confidenceFilterDebounceTimer = setTimeout(() => {
-                eel.refilter_instances(parseInt(this.value))();
-            }, 400); // 400ms delay
-        });
-    }
-
-	const resetSliderBtn = document.getElementById('reset-slider-btn');
-	if (resetSliderBtn) {
-		resetSliderBtn.addEventListener('click', function() {
-			const slider = document.getElementById('confidence-slider');
-			const display = document.getElementById('slider-value-display');
-			const timelineContainer = document.getElementById('full-timeline-section');
-			
-			if (slider && display) {
-				slider.value = 100;
-				display.textContent = '100%';
-
-				// Explicitly remove the 'timeline-filtered' class when resetting.
-				if (timelineContainer) {
-					timelineContainer.classList.remove('timeline-filtered');
-				}
-				
-				// Trigger the filter update
-				eel.refilter_instances(100)();
-			}
-		});
-	}
-
     const logCollapseElement = document.getElementById('log-panel-collapse');
     if (logCollapseElement) {
         const fabLeft = document.querySelector('.fab-container-left');
         const fabRight = document.querySelector('.fab-container-right');
-
-        // Height of the expanded log content + height of the log bar + some margin
         const fabUpPosition = `${200 + 45 + 5}px`; 
         const fabDownPosition = '65px';
 
@@ -1304,7 +1097,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (fabLeft) fabLeft.style.bottom = fabUpPosition;
             if (fabRight) fabRight.style.bottom = fabUpPosition;
         });
-
         logCollapseElement.addEventListener('hide.bs.collapse', () => {
             if (fabLeft) fabLeft.style.bottom = fabDownPosition;
             if (fabRight) fabRight.style.bottom = fabDownPosition;

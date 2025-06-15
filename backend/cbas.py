@@ -871,8 +871,14 @@ class Project:
         
         return list(seqs), list(labels)
 
+# In backend/cbas.py
+
     def _load_dataset_common(self, name, split):
-        """Helper to reduce code duplication between dataset loading methods."""
+        """
+        Helper to load a dataset, using a Stratified Group Split strategy.
+        This ensures no data leakage (groups are not split between train/test)
+        while guaranteeing all behaviors are represented in the test set to prevent crashes.
+        """
         dataset_path = os.path.join(self.datasets_dir, name)
         if not os.path.isdir(dataset_path): raise FileNotFoundError(dataset_path)
         with open(os.path.join(dataset_path, "labels.yaml"), "r") as f:
@@ -885,24 +891,100 @@ class Project:
         if not all_insts: return [], [], behaviors
         random.shuffle(all_insts)
 
-        inst_groups = {}
+        # --- New Corrected Stratified Group Splitting Logic ---
+
+        # 1. Map groups (individual animals/cameras) to the behaviors and instances they contain.
+        #    A "group" is now correctly identified by parsing the filename (e.g., "WTM1", "OVX2").
+        group_to_behaviors = {}
+        group_to_instances = {}
         for inst in all_insts:
-            if 'video' in inst:
-                inst_groups.setdefault(os.path.dirname(inst["video"]), []).append(inst)
+            if 'video' in inst and inst['video']:
+                try:
+                    # Extract the base filename: "WTM1_00096.mp4"
+                    basename = os.path.basename(inst['video'])
+                    # Extract the group key: "WTM1"
+                    group_key = basename.rsplit('_', 1)[0]
+                    
+                    group_to_instances.setdefault(group_key, []).append(inst)
+                    group_to_behaviors.setdefault(group_key, set()).add(inst['label'])
+                except IndexError:
+                    # Handle filenames that don't match the "name_number.mp4" format
+                    print(f"Warning: Could not parse group key from filename: {inst['video']}. Treating it as its own group.")
+                    group_key = inst['video'] # Fallback to using the full path as a unique group
+                    group_to_instances.setdefault(group_key, []).append(inst)
+                    group_to_behaviors.setdefault(group_key, set()).add(inst['label'])
+
+
+        all_groups = list(group_to_instances.keys())
+        random.shuffle(all_groups) # Shuffle to break ties randomly
+
+        test_groups = set()
+        behaviors_needed_in_test = set(behaviors)
         
-        group_keys = list(inst_groups.keys()); random.shuffle(group_keys)
-        split_idx = int((1 - split) * len(group_keys))
-        train_keys, test_keys = group_keys[:split_idx], group_keys[split_idx:]
+        # 2. Greedily build a test set that covers all behaviors.
+        # In each step, pick the group that adds the most *new* behaviors to the test set.
+        while behaviors_needed_in_test:
+            best_group = None
+            best_group_coverage = -1
+            
+            available_groups = [g for g in all_groups if g not in test_groups]
+            if not available_groups:
+                print(f"Warning: Could not find groups to cover all behaviors. Missing: {behaviors_needed_in_test}")
+                break
+
+            for group in available_groups:
+                newly_covered = len(behaviors_needed_in_test.intersection(group_to_behaviors.get(group, set())))
+                if newly_covered > best_group_coverage:
+                    best_group_coverage = newly_covered
+                    best_group = group
+            
+            if best_group:
+                test_groups.add(best_group)
+                behaviors_needed_in_test.difference_update(group_to_behaviors.get(best_group, set()))
+            else:
+                break
         
-        train_insts = [inst for key in train_keys for inst in inst_groups[key]]
-        test_insts = [inst for key in test_keys for inst in inst_groups[key]]
+        # 3. Fill the rest of the test set up to the desired split percentage.
+        # Add remaining groups, prioritizing those with more instances.
+        remaining_groups = [g for g in all_groups if g not in test_groups]
+        remaining_groups.sort(key=lambda g: len(group_to_instances.get(g, [])), reverse=True)
         
+        current_test_size = sum(len(group_to_instances.get(g, [])) for g in test_groups)
+        total_size = len(all_insts)
+
+        for group in remaining_groups:
+            # Check if we have reached the target split size
+            if current_test_size / total_size >= split:
+                break
+            # Add the group to the test set only if it's not already there
+            if group not in test_groups:
+                test_groups.add(group)
+                current_test_size += len(group_to_instances.get(group, []))
+
+        # 4. All other groups go to the training set.
+        train_groups = [g for g in all_groups if g not in test_groups]
+
+        # 5. Assemble the final instance lists.
+        train_insts = [inst for group in train_groups for inst in group_to_instances[group]]
+        test_insts = [inst for group in test_groups for inst in group_to_instances[group]]
+        
+        random.shuffle(train_insts)
+        random.shuffle(test_insts)
+        
+        print(f"Stratified Group Split: {len(train_insts)} train instances, {len(test_insts)} test instances.")
+        print(f"  - Train groups: {len(train_groups)}, Test groups: {len(test_groups)}")
+
+        if not test_insts and train_insts:
+            print("  - Warning: Stratified split resulted in an empty test set. Falling back to 80/20 instance split.")
+            split_idx = int(len(all_insts) * (1 - split))
+            return all_insts[:split_idx], all_insts[split_idx:], behaviors
+
         return train_insts, test_insts, behaviors
 
     def load_dataset(self, name: str, seed: int = 42, split: float = 0.2, seq_len: int = 15, progress_callback=None) -> tuple:
         random.seed(seed)
         train_insts, test_insts, behaviors = self._load_dataset_common(name, split)
-        if train_insts is None: return None, None
+        if train_insts is None: return None, None, None, None # Return tuple of Nones
         
         def train_prog(p): progress_callback(p*0.5) if progress_callback else None
         def test_prog(p): progress_callback(50 + p*0.5) if progress_callback else None
@@ -910,25 +992,27 @@ class Project:
         train_seqs, train_labels = self.convert_instances(train_insts, seq_len, behaviors, train_prog)
         test_seqs, test_labels = self.convert_instances(test_insts, seq_len, behaviors, test_prog)
         
-        return BalancedDataset(train_seqs, train_labels, behaviors), BalancedDataset(test_seqs, test_labels, behaviors)
+        # Return the PyTorch datasets AND the original instance lists
+        return BalancedDataset(train_seqs, train_labels, behaviors), StandardDataset(test_seqs, test_labels), train_insts, test_insts
 
     def load_dataset_for_weighted_loss(self, name, seed=42, split=0.2, seq_len=15, progress_callback=None) -> tuple:
         random.seed(seed)
         train_insts, test_insts, behaviors = self._load_dataset_common(name, split)
-        if train_insts is None: return None, None, None
+        if train_insts is None: return None, None, None, None, None # Return tuple of Nones
 
         def train_prog(p): progress_callback(p*0.5) if progress_callback else None
         def test_prog(p): progress_callback(50 + p*0.5) if progress_callback else None
         
         train_seqs, train_labels = self.convert_instances(train_insts, seq_len, behaviors, train_prog)
-        if not train_labels: return None, None, None
+        if not train_labels: return None, None, None, None, None
         
         class_counts = np.bincount([lbl.item() for lbl in train_labels], minlength=len(behaviors))
         weights = [sum(class_counts) / (len(behaviors) * c) if c > 0 else 0 for c in class_counts]
 
         test_seqs, test_labels = self.convert_instances(test_insts, seq_len, behaviors, test_prog)
 
-        return StandardDataset(train_seqs, train_labels), StandardDataset(test_seqs, test_labels), weights
+        # Return the PyTorch datasets, weights, AND the original instance lists
+        return StandardDataset(train_seqs, train_labels), StandardDataset(test_seqs, test_labels), weights, train_insts, test_insts
 
 
 # =================================================================
