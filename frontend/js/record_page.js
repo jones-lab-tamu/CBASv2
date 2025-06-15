@@ -14,21 +14,15 @@ function update_log_panel(message) {
     if (!logContainer) return;
 
     // --- Logic for sessionStorage ---
-    // 1. Get current history or initialize a new array
     let logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
-    // 2. Add the new message
     logHistory.push(message);
-    // 3. Keep the history from growing indefinitely (e.g., last 500 messages)
     while (logHistory.length > 500) {
         logHistory.shift();
     }
-    // 4. Save the updated history back to sessionStorage
     sessionStorage.setItem('logHistory', JSON.stringify(logHistory));
     // --- End of sessionStorage logic ---
 
-    // Now, render the new message to the screen
     renderLogMessage(message, logContainer);
-    // Auto-scroll to the bottom
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
@@ -54,14 +48,12 @@ function renderLogMessage(message, container) {
 }
 
 
-// Attach event listener for the clear log button and to load history on page start
 document.addEventListener('DOMContentLoaded', () => {
     const logContainer = document.getElementById('log-panel-content');
     if (logContainer) {
-        // Load history from sessionStorage on page load
         const logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
         logHistory.forEach(msg => renderLogMessage(msg, logContainer));
-        logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom after loading
+        logContainer.scrollTop = logContainer.scrollHeight;
     }
     
     const clearBtn = document.getElementById('clear-log-btn');
@@ -69,7 +61,6 @@ document.addEventListener('DOMContentLoaded', () => {
         clearBtn.addEventListener('click', () => {
             if (logContainer) {
                 logContainer.innerHTML = '';
-                // Also clear the stored history
                 sessionStorage.setItem('logHistory', '[]'); 
                 update_log_panel('Log cleared.');
             }
@@ -81,15 +72,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // GLOBAL STATE & VARIABLES
 // =================================================================
 
-/** Flag to prevent `kill_streams` from being called during intentional page navigation. */
 let routingInProgress = false;
-
-/** Stores the original camera name when opening settings, for rename detection. */
 let originalCameraNameForSettings = "";
-/** Stores the current image for the settings modal preview. */
 let modalPreviewImage = new Image();
 
-// --- Bootstrap Modal Instances ---
 const addCameraModalElement = document.getElementById('addCamera');
 const statusModalElement = document.getElementById('statusModal');
 const cameraSettingsModalElement = document.getElementById('cameraSettings');
@@ -109,14 +95,13 @@ function routeToRecordPage() { routingInProgress = true; window.location.href = 
 function routeToLabelTrainPage() { routingInProgress = true; window.location.href = './label-train.html'; }
 function routeToVisualizePage() { routingInProgress = true; window.location.href = './visualize.html'; }
 
-/** Shows the general error modal with a custom message. */
 function showErrorOnRecordPage(message) {
     const errorMessageElement = document.getElementById("error-message");
     if (errorMessageElement && generalErrorBsModal) {
         errorMessageElement.innerText = message;
         generalErrorBsModal.show();
     } else {
-        alert(message); // Fallback
+        alert(message);
     }
 }
 
@@ -125,7 +110,6 @@ function showErrorOnRecordPage(message) {
 // EEL-EXPOSED FUNCTIONS (Called FROM Python)
 // =================================================================
 
-/** Updates a camera's canvas with a new image blob from the backend. */
 eel.expose(updateImageSrc);
 async function updateImageSrc(cameraName, base64Val) {
     const canvas = document.getElementById(`camera-${cameraName}`);
@@ -171,12 +155,10 @@ async function updateImageSrc(cameraName, base64Val) {
 // UI INTERACTION & EVENT HANDLERS (Called FROM HTML)
 // =================================================================
 
-/** Shows the modal for adding a new camera. */
 function showAddCameraModal() {
     addCameraBsModal?.show();
 }
 
-/** Fetches and displays the current application status in a modal. */
 async function showStatusModal() {
     try {
         const status = await eel.get_cbas_status()();
@@ -186,7 +168,6 @@ async function showStatusModal() {
     } catch (e) { console.error("Get status error:", e); }
 }
 
-/** Submits the 'Add Camera' form data to the backend. */
 async function addCameraSubmit() {
     const name = document.getElementById('camera-name-modal-input').value;
     const rtsp = document.getElementById('rtsp-url-modal-input').value;
@@ -203,12 +184,13 @@ async function addCameraSubmit() {
     }
 }
 
-/** Starts recording for a single, specified camera. */
 async function startCamera(cameraName) {
-    const dir = await eel.create_recording_dir(cameraName)();
-    if (!dir) { showErrorOnRecordPage(`Could not create recording directory for ${cameraName}.`); return; }
-    
-    const success = await eel.start_camera_stream(cameraName, dir, 600)();
+    const sessionName = document.getElementById('session-name-input').value;
+    if (!sessionName.trim()) {
+        showErrorOnRecordPage('Please enter a Session Name before starting a recording.');
+        return;
+    }
+    const success = await eel.start_camera_stream(cameraName, sessionName, 600)();
     if (success) {
         document.getElementById(`before-recording-${cameraName}`).style.display = 'none';
         document.getElementById(`during-recording-${cameraName}`).style.display = 'flex';
@@ -218,7 +200,6 @@ async function startCamera(cameraName) {
     await updateCamButtons();
 }
 
-/** Stops recording for a single, specified camera. */
 async function stopCamera(cameraName) {
     const success = await eel.stop_camera_stream(cameraName)();
     if (success) {
@@ -230,7 +211,6 @@ async function stopCamera(cameraName) {
     await updateCamButtons();
 }
 
-/** Starts recording on all configured cameras. */
 async function startAllCameras() {
     const cameras = await eel.get_camera_list()();
     if (cameras?.length > 0) {
@@ -241,7 +221,6 @@ async function startAllCameras() {
     }
 }
 
-/** Stops recording on all active cameras. */
 async function stopAllCameras() {
     const activeStreams = await eel.get_active_streams()() || [];
     if (activeStreams.length > 0) {
@@ -250,12 +229,10 @@ async function stopAllCameras() {
     }
 }
 
-/** Opens a live view of the camera's RTSP stream in an external player. */
 function liveViewCamera(cameraName) {
     eel.open_camera_live_view(cameraName)();
 }
 
-/** Saves updated camera settings from the settings modal. */
 async function saveCameraSettings() {
     const newName = document.getElementById('cs-name').value;
     if (!newName.trim()) { showErrorOnRecordPage("Camera name cannot be empty."); return; }
@@ -291,7 +268,6 @@ async function saveCameraSettings() {
 // CORE APPLICATION LOGIC
 // =================================================================
 
-/** Loads camera data from the backend and builds the camera cards on the page. */
 async function loadCameraHTMLCards() {
     const container = document.getElementById('camera-container');
     if (!container) return;
@@ -326,7 +302,6 @@ async function loadCameraHTMLCards() {
                 </div>
             </div>`;
     }
-    // Draw placeholder images after all HTML is injected
     cameras.forEach(([name]) => {
         const canvas = document.getElementById(`camera-${name}`);
         if(canvas) {
@@ -338,14 +313,12 @@ async function loadCameraHTMLCards() {
     });
 }
 
-/** Fetches camera list, builds cards, updates buttons, and starts thumbnail download. */
 async function loadCameras() {
     await loadCameraHTMLCards();
     await updateCamButtons();
     eel.download_camera_thumbnails()();
 }
 
-/** Updates the recording status indicators and buttons for all cameras. */
 async function updateCamButtons() {
     const activeStreams = await eel.get_active_streams()() || [];
     setRecordAllIcon(activeStreams.length > 0);
@@ -364,7 +337,6 @@ async function updateCamButtons() {
     }
 }
 
-/** Updates the animated status icon in the top right. */
 async function updateStatusIcon() {
     const icon = document.getElementById("status-camera-icon");
     if (!icon) return;
@@ -374,7 +346,6 @@ async function updateStatusIcon() {
     isStreaming ? icon.classList.add("blinking") : icon.classList.remove("blinking");
 }
 
-/** Sets the "Record All" / "Stop All" FAB based on recording state. */
 function setRecordAllIcon(isAnyRecording) {
     const fabContainer = document.querySelector('.fab-container-right');
     if (!fabContainer) return;
@@ -394,7 +365,6 @@ function setRecordAllIcon(isAnyRecording) {
     }
 }
 
-/** Draws a (potentially cropped) image onto a canvas, scaled to fit. */
 function drawImageOnCanvas(img, ctx, sx, sy, sw, sh, targetResolution) {
     const canvas = ctx.canvas;
     if (sw <= 0 || sh <= 0) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
@@ -406,7 +376,6 @@ function drawImageOnCanvas(img, ctx, sx, sy, sw, sh, targetResolution) {
     ctx.drawImage(img, sx, sy, sw, sh, destX, destY, drawW, drawH);
 }
 
-/** Loads camera settings into the settings modal for editing. */
 async function loadCameraSettings(cameraName) {
     const modalCanvas = document.getElementById("camera-image");
     if (!modalCanvas) return;
@@ -429,7 +398,7 @@ async function loadCameraSettings(cameraName) {
             
             modalPreviewImage.onload = () => {
                 const aspectRatio = modalPreviewImage.naturalWidth / modalPreviewImage.naturalHeight;
-                modalCanvas.width = 600; // Fixed width from HTML
+                modalCanvas.width = 600;
                 modalCanvas.height = modalCanvas.width / aspectRatio;
                 drawBoundsOnModalCanvas(modalPreviewImage);
             };
@@ -444,7 +413,6 @@ async function loadCameraSettings(cameraName) {
     }
 }
 
-/** Redraws the crop bounds on the settings modal's canvas preview. */
 function drawBoundsOnModalCanvas(imageToDraw) {
     const modalCanvas = document.getElementById("camera-image");
     if (!modalCanvas || !imageToDraw || !imageToDraw.complete || imageToDraw.naturalWidth === 0) return;
@@ -455,7 +423,6 @@ function drawBoundsOnModalCanvas(imageToDraw) {
     let cw = parseFloat(document.getElementById('cs-crop-width').value) || 1;
     let ch = parseFloat(document.getElementById('cs-crop-height').value) || 1;
 
-    // Clamp values to prevent invalid crop areas
     cx = Math.max(0, Math.min(1, cx));
     cy = Math.max(0, Math.min(1, cy));
     cw = Math.min(cw, 1 - cx);
@@ -484,25 +451,20 @@ function drawBoundsOnModalCanvas(imageToDraw) {
 // PAGE INITIALIZATION
 // =================================================================
 
-/** Main execution block that runs when the page is fully loaded. */
 document.addEventListener('DOMContentLoaded', () => {
     loadCameras();
     setInterval(updateStatusIcon, 3000);
     document.getElementById('addCameraButton')?.addEventListener('click', addCameraSubmit);
     
-    // Add event listeners to settings modal fields to update preview
     const settingIds = ['cs-cropx', 'cs-cropy', 'cs-crop-width', 'cs-crop-height'];
     settingIds.forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => drawBoundsOnModalCanvas(modalPreviewImage));
     });
 
-    // START OF NEW CODE BLOCK
     const logCollapseElement = document.getElementById('log-panel-collapse');
     if (logCollapseElement) {
         const fabLeft = document.querySelector('.fab-container-left');
         const fabRight = document.querySelector('.fab-container-right');
-
-        // Height of the expanded log content + height of the log bar + some margin
         const fabUpPosition = `${200 + 45 + 5}px`; 
         const fabDownPosition = '65px';
 
@@ -510,19 +472,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (fabLeft) fabLeft.style.bottom = fabUpPosition;
             if (fabRight) fabRight.style.bottom = fabUpPosition;
         });
-
         logCollapseElement.addEventListener('hide.bs.collapse', () => {
             if (fabLeft) fabLeft.style.bottom = fabDownPosition;
             if (fabRight) fabRight.style.bottom = fabDownPosition;
         });
     }
-    // END OF NEW CODE BLOCK
 });
 
-/** Page unload listeners to ensure Python processes are killed. */
 window.addEventListener("unload", () => {
-    if (!routingInProgress) { eel.kill_streams()?.().catch(err => console.error(err)); }
+    if (!routingInProgress) { eel.kill_streams()?.catch(err => console.error(err)); }
 });
 window.onbeforeunload = () => {
-    if (!routingInProgress) { eel.kill_streams()?.().catch(err => console.error(err)); }
+    if (!routingInProgress) { eel.kill_streams()?.catch(err => console.error(err)); }
 };

@@ -53,8 +53,6 @@
   MODALS (Pop-up Dialogs)
   ================================================================== -->
 
-  <!-- Bootstrap modal -->
-
   <div class="modal" tabindex="-1" id="importVideosModal">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -65,8 +63,18 @@
         <div class="modal-body">
           <p><strong id="import-file-count">0</strong> video file(s) selected.</p>
           <hr>
-          <p>Please provide a name for this new recording session. The videos will be copied into your project.</p>
-          <input type="text" class="form-control" id="import-session-name" placeholder="e.g., Experiment 1 - Cohort A">
+          <p>Provide a name for the session and a new folder for this subject/camera.</p>
+          
+          <div class="mb-3">
+            <label for="import-session-name" class="form-label">Session Name:</label>
+            <input type="text" class="form-control" id="import-session-name" placeholder="Type or select an existing session" list="session-names-list">
+            <datalist id="session-names-list"></datalist>
+          </div>
+
+          <div class="mb-3">
+            <label for="import-subject-name" class="form-label">Subject / Camera Name:</label>
+            <input type="text" class="form-control" id="import-subject-name" placeholder="e.g., Mouse-A12 (creates a new folder)">
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -292,7 +300,6 @@
 		<i class="bi bi-box-arrow-in-down" style="font-size: 40px;"></i>
 	  </div>
 	</div>
-    <!-- FIX: Move Refresh button container INSIDE the main datasets div -->
     <div class="fab-container-left">
       <div class="fab" onclick="refreshAllDatasets()" data-bs-toggle="tooltip" data-bs-placement="right" title="Refresh Datasets from Disk">
         <i class="bi bi-arrow-clockwise" style="font-size: 40px;"></i>
@@ -314,7 +321,6 @@
             <button id="save-labels-btn" class="btn btn-success" onclick="handleCommitClick()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Save confirmed labels (Ctrl+S)">
 			  <i class="bi bi-save-fill me-2"></i>Commit Corrections
 			</button>
-			<!-- The cancel button also calls its function directly -->
 			<button id="cancel-commit-btn" class="btn btn-secondary ms-2" onclick="eel.cancel_commit_stage()()" style="display: none;">
 			  Cancel
 			</button>
@@ -323,7 +329,6 @@
         <!-- Main Content: Video and Controls Panel -->
         <div class="row flex-grow-1">
           
-          <!-- Left Side: Video Player and Controls Panel -->
 			<div class="col-md-8 d-flex flex-column justify-content-center align-items-center">
 
 				<!-- Section 1: The Video Player ONLY -->
@@ -380,7 +385,6 @@
 <!-- Keyboard Controls and Confidence Filter -->
 <div id="labeling-cheat-sheet" class="container text-light mt-3" style="display: none; max-width: 95vw; min-width: 750px;">
   <div class="card bg-dark">
-    <!-- The header now contains the confidence filter -->
     <div class="card-header d-flex justify-content-between align-items-center">
       <h5 class="mb-0 text-success"><i class="bi bi-robot me-2"></i>Review Mode Controls</h5>
       <div id="confidence-filter-container" class="d-flex align-items-center w-50" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Filter out high-confidence predictions to focus on mistakes">
@@ -390,7 +394,6 @@
 		<button id="reset-slider-btn" class="btn btn-sm btn-outline-secondary ms-2">Reset</button>
       </div>
     </div>
-    <!-- The body contains the keyboard shortcuts -->
     <div class="card-body" style="font-size: 0.9rem;">
       <div class="row">
         <div class="col-md-6">
@@ -419,16 +422,12 @@
   LOG PANEL FOOTER
   ================================================================== -->
   <div class="log-panel-footer">
-    <!-- This is the button that toggles the panel -->
     <div class="d-flex justify-content-end p-2 bg-dark">
-      <!-- MODIFIED: Added tooltip attributes -->
       <button class="btn btn-sm btn-outline-secondary me-2" id="clear-log-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Clear all messages from the log">Clear Log</button>
-      <!-- MODIFIED: Added tooltip attributes -->
       <button class="btn btn-sm btn-info" type="button" data-bs-toggle="collapse" data-bs-target="#log-panel-collapse" aria-expanded="false" aria-controls="log-panel-collapse" data-bs-toggle="tooltip" data-bs-placement="top" title="Show/Hide the log panel">
         <i class="bi bi-terminal"></i> View Log
       </button>
     </div>
-    <!-- This is the collapsible panel itself -->
     <div class="collapse" id="log-panel-collapse">
       <div id="log-panel-content">
         <!-- Log messages will be appended here by JavaScript -->
@@ -439,13 +438,8 @@
   <!-- =================================================================
   SCRIPTS
   ================================================================== -->
-  <!-- Bootstrap JS Bundle -->
   <script src="libs/bootstrap-5.3.3/js/bootstrap.bundle.min.js"></script>
-
-  <!-- Custom Page Logic -->
   <script type="text/javascript" src="js/label_train_page.js"></script>
-
-  <!-- Tooltip Initializer -->
   <script>
     document.addEventListener('DOMContentLoaded', function () {
       var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
@@ -454,10 +448,7 @@
       })
     });
   </script>
-
-  <!-- Spinner -->
   <div id="cover-spin"></div>
-
 </body>
 
 </html>

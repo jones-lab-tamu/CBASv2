@@ -150,14 +150,18 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeFunBlurb();
 
     // Attach listeners to the main project selection buttons
-    // These now use the new `electronAPI` object to send messages to main.js
     document.getElementById("create")?.addEventListener("click", () => {
         filePickerMode = 0;
-        window.electronAPI?.send("open-file-dialog");
+        // Get the last known project path to suggest a default location
+        const lastProjectPath = JSON.parse(window.localStorage.getItem("project"))?.project_path;
+        window.electronAPI?.send("open-file-dialog", { defaultPath: lastProjectPath });
     });
+    
     document.getElementById("open")?.addEventListener("click", () => {
         filePickerMode = 1;
-        window.electronAPI?.send("open-file-dialog");
+        // Also do this for the "Open" button
+        const lastProjectPath = JSON.parse(window.localStorage.getItem("project"))?.project_path;
+        window.electronAPI?.send("open-file-dialog", { defaultPath: lastProjectPath });
     });
 
     // Attach listener to the modal's "Create" button

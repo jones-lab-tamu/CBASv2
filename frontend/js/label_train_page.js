@@ -13,24 +13,17 @@ function update_log_panel(message) {
     const logContainer = document.getElementById('log-panel-content');
     if (!logContainer) return;
 
-    // --- Logic for sessionStorage ---
     let logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
     logHistory.push(message);
     while (logHistory.length > 500) {
         logHistory.shift();
     }
     sessionStorage.setItem('logHistory', JSON.stringify(logHistory));
-    // --- End of sessionStorage logic ---
 
     renderLogMessage(message, logContainer);
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
-/**
- * Helper function to render a single log message to the DOM.
- * @param {string} message - The log message text.
- * @param {HTMLElement} container - The container to append the message to.
- */
 function renderLogMessage(message, container) {
     const logEntry = document.createElement('div');
     logEntry.className = 'log-message';
@@ -46,28 +39,6 @@ function renderLogMessage(message, container) {
     logEntry.textContent = message;
     container.appendChild(logEntry);
 }
-
-
-document.addEventListener('DOMContentLoaded', () => {
-    const logContainer = document.getElementById('log-panel-content');
-    if (logContainer) {
-        const logHistory = JSON.parse(sessionStorage.getItem('logHistory') || '[]');
-        logHistory.forEach(msg => renderLogMessage(msg, logContainer));
-        logContainer.scrollTop = logContainer.scrollHeight;
-    }
-    
-    const clearBtn = document.getElementById('clear-log-btn');
-    if (clearBtn) {
-        clearBtn.addEventListener('click', () => {
-            if (logContainer) {
-                logContainer.innerHTML = '';
-                sessionStorage.setItem('logHistory', '[]'); 
-                update_log_panel('Log cleared.');
-            }
-        });
-    }
-});
-
 
 // =================================================================
 // GLOBAL STATE & VARIABLES
@@ -95,6 +66,7 @@ let generalErrorBsModal = errorModalElement ? new bootstrap.Modal(errorModalElem
 let preLabelBsModal = preLabelModalElement ? new bootstrap.Modal(preLabelModalElement) : null;
 let importVideosBsModal = importVideosModalElement ? new bootstrap.Modal(importVideosModalElement) : null;
 let manageDatasetBsModal = manageDatasetModalElement ? new bootstrap.Modal(manageDatasetModalElement) : null;
+
 
 // =================================================================
 // ROUTING & UTILITY FUNCTIONS
@@ -128,12 +100,6 @@ function showManageDatasetModal(datasetName) {
     manageDatasetBsModal.show();
 }
 
-/**
- * Creates the styled HTML for a table cell that displays both instance and frame counts.
- * It intelligently applies coloring and tooltips based on imbalance status.
- * @param {object} data - The structured data object from Python.
- * @returns {string} The complete HTML for the table cell's content.
- */
 function createCountCellHTML(data) {
     if (!data || typeof data.inst === 'undefined') {
         return data || 'N/A';
@@ -470,7 +436,7 @@ function setConfirmationModeUI(isConfirming) {
 
 
 // =================================================================
-// UI INTERACTION & EVENT HANDLERS (Called FROM HTML)
+// UI INTERACTION & EVENT HANDLERS
 // =================================================================
 
 function jumpToFrame() {
@@ -684,6 +650,17 @@ async function showImportVideosDialog() {
             document.getElementById('import-file-count').textContent = filePaths.length;
             document.getElementById('import-session-name').value = '';
             document.getElementById('import-subject-name').value = '';
+            
+            const sessionDatalist = document.getElementById('session-names-list');
+            if (sessionDatalist) {
+                sessionDatalist.innerHTML = ''; 
+                const sessionNames = await eel.get_existing_session_names()();
+                sessionNames.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    sessionDatalist.appendChild(option);
+                });
+            }
             importVideosBsModal?.show();
         } else {
             console.log("User cancelled video selection.");
@@ -1007,24 +984,53 @@ function waitForEelConnection() {
 
 // --- Global Event Listeners ---
 
-const fullTimelineElement = document.getElementById('full-timeline-image');
-if (fullTimelineElement) {
-    fullTimelineElement.addEventListener('mousedown', function (event) {
-        const x = event.offsetX;
-        eel.handle_click_on_label_image(x, 0)?.();
-        document.addEventListener('mousemove', handleMouseMoveForLabelScrub);
-        document.addEventListener('mouseup', handleMouseUpForLabelScrub);
-    });
-}
+document.addEventListener('DOMContentLoaded', async () => {
+    await waitForEelConnection();
+    loadInitialDatasetCards();
 
-const zoomBarImageElement = document.getElementById('zoom-bar-image');
-if (zoomBarImageElement) {
-    zoomBarImageElement.addEventListener('mousedown', function (event) {
-        const imageRect = event.target.getBoundingClientRect();
-        const x = event.clientX - imageRect.left;
-        eel.get_zoom_range_for_click(x)();
-    });
-}
+    document.getElementById('createDatasetButton')?.addEventListener('click', submitCreateDataset);
+    document.getElementById('trainModelButton')?.addEventListener('click', submitTrainModel);
+    document.getElementById('startClassificationButton')?.addEventListener('click', submitStartClassification);
+    document.getElementById('modal-import-button-final')?.addEventListener('click', handleImportSubmit);
+	document.getElementById('pl-model-select')?.addEventListener('change', onModelSelectChange);
+    document.getElementById('pl-session-select')?.addEventListener('change', onSessionSelectChange);
+
+    const fullTimelineElement = document.getElementById('full-timeline-image');
+    if (fullTimelineElement) {
+        fullTimelineElement.addEventListener('mousedown', function (event) {
+            const x = event.offsetX;
+            eel.handle_click_on_label_image(x, 0)?.();
+            document.addEventListener('mousemove', handleMouseMoveForLabelScrub);
+            document.addEventListener('mouseup', handleMouseUpForLabelScrub);
+        });
+    }
+
+    const zoomBarImageElement = document.getElementById('zoom-bar-image');
+    if (zoomBarImageElement) {
+        zoomBarImageElement.addEventListener('mousedown', function (event) {
+            const imageRect = event.target.getBoundingClientRect();
+            const x = event.clientX - imageRect.left;
+            eel.get_zoom_range_for_click(x)();
+        });
+    }
+
+    const logCollapseElement = document.getElementById('log-panel-collapse');
+    if (logCollapseElement) {
+        const fabLeft = document.querySelector('.fab-container-left');
+        const fabRight = document.querySelector('.fab-container-right');
+        const fabUpPosition = `${200 + 45 + 5}px`; 
+        const fabDownPosition = '65px';
+
+        logCollapseElement.addEventListener('show.bs.collapse', () => {
+            if (fabLeft) fabLeft.style.bottom = fabUpPosition;
+            if (fabRight) fabRight.style.bottom = fabUpPosition;
+        });
+        logCollapseElement.addEventListener('hide.bs.collapse', () => {
+            if (fabLeft) fabLeft.style.bottom = fabDownPosition;
+            if (fabRight) fabRight.style.bottom = fabDownPosition;
+        });
+    }
+});
 
 window.addEventListener("keydown", (event) => {
     if (document.querySelector('.modal.show') || !labelingInterfaceActive || document.getElementById('label')?.style.display !== 'flex') return;
@@ -1074,32 +1080,3 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("unload", () => { if (!routingInProgress) eel.kill_streams()?.catch(console.error); });
 window.onbeforeunload = () => { if (!routingInProgress) eel.kill_streams()?.catch(console.error); };
-
-document.addEventListener('DOMContentLoaded', async () => {
-    await waitForEelConnection();
-    loadInitialDatasetCards();
-
-    document.getElementById('createDatasetButton')?.addEventListener('click', submitCreateDataset);
-    document.getElementById('trainModelButton')?.addEventListener('click', submitTrainModel);
-    document.getElementById('startClassificationButton')?.addEventListener('click', submitStartClassification);
-    document.getElementById('modal-import-button-final')?.addEventListener('click', handleImportSubmit);
-	document.getElementById('pl-model-select')?.addEventListener('change', onModelSelectChange);
-    document.getElementById('pl-session-select')?.addEventListener('change', onSessionSelectChange);
-
-    const logCollapseElement = document.getElementById('log-panel-collapse');
-    if (logCollapseElement) {
-        const fabLeft = document.querySelector('.fab-container-left');
-        const fabRight = document.querySelector('.fab-container-right');
-        const fabUpPosition = `${200 + 45 + 5}px`; 
-        const fabDownPosition = '65px';
-
-        logCollapseElement.addEventListener('show.bs.collapse', () => {
-            if (fabLeft) fabLeft.style.bottom = fabUpPosition;
-            if (fabRight) fabRight.style.bottom = fabUpPosition;
-        });
-        logCollapseElement.addEventListener('hide.bs.collapse', () => {
-            if (fabLeft) fabLeft.style.bottom = fabDownPosition;
-            if (fabRight) fabRight.style.bottom = fabDownPosition;
-        });
-    }
-});

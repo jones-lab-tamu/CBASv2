@@ -378,19 +378,18 @@ class Camera:
         with open(os.path.join(self.path, "config.yaml"), "w") as file:
             yaml.dump(self.settings_to_dict(), file, allow_unicode=True)
 
-    def create_recording_dir(self) -> str | bool:
-        date_path = os.path.join(self.project.recordings_dir, datetime.now().strftime("%Y%m%d"))
-        os.makedirs(date_path, exist_ok=True)
-        cam_path = os.path.join(date_path, f"{self.name}-{datetime.now().strftime('%I%M%S-%p')}")
-        if not os.path.exists(cam_path):
-            os.makedirs(cam_path); return cam_path
-        return False
-
-    def start_recording(self, destination: str, segment_time: int) -> bool:
+    def start_recording(self, session_name: str, segment_time: int) -> bool:
         if self.name in self.project.active_recordings: return False
-        os.makedirs(destination, exist_ok=True)
+
+        # The session_name is the top-level folder.
+        # Path: .../recordings/Session Name/
+        session_path = os.path.join(self.project.recordings_dir, session_name)
+        # Path: .../recordings/Session Name/Camera Name/
+        final_dest_dir = os.path.join(session_path, self.name)
         
-        dest_pattern = os.path.join(destination, f"{self.name}_%05d.mp4")
+        os.makedirs(final_dest_dir, exist_ok=True)
+        dest_pattern = os.path.join(final_dest_dir, f"{self.name}_%05d.mp4")
+
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp",
             "-i", str(self.rtsp_url), "-r", str(self.framerate),
@@ -871,8 +870,6 @@ class Project:
         
         return list(seqs), list(labels)
 
-# In backend/cbas.py
-
     def _load_dataset_common(self, name, split):
         """
         Helper to load a dataset, using a Stratified Group Split strategy.
@@ -891,29 +888,19 @@ class Project:
         if not all_insts: return [], [], behaviors
         random.shuffle(all_insts)
 
-        # --- New Corrected Stratified Group Splitting Logic ---
+        # --- New Stratified Group Splitting Logic ---
 
         # 1. Map groups (individual animals/cameras) to the behaviors and instances they contain.
-        #    A "group" is now correctly identified by parsing the filename (e.g., "WTM1", "OVX2").
+        #    A "group" is now correctly identified by parsing the video's parent directory name.
         group_to_behaviors = {}
         group_to_instances = {}
         for inst in all_insts:
             if 'video' in inst and inst['video']:
-                try:
-                    # Extract the base filename: "WTM1_00096.mp4"
-                    basename = os.path.basename(inst['video'])
-                    # Extract the group key: "WTM1"
-                    group_key = basename.rsplit('_', 1)[0]
-                    
-                    group_to_instances.setdefault(group_key, []).append(inst)
-                    group_to_behaviors.setdefault(group_key, set()).add(inst['label'])
-                except IndexError:
-                    # Handle filenames that don't match the "name_number.mp4" format
-                    print(f"Warning: Could not parse group key from filename: {inst['video']}. Treating it as its own group.")
-                    group_key = inst['video'] # Fallback to using the full path as a unique group
-                    group_to_instances.setdefault(group_key, []).append(inst)
-                    group_to_behaviors.setdefault(group_key, set()).add(inst['label'])
-
+                # The "group" is now the parent directory of the video file (e.g., "WTM1", "OVX2").
+                group_key = os.path.basename(os.path.dirname(inst['video']))
+                
+                group_to_instances.setdefault(group_key, []).append(inst)
+                group_to_behaviors.setdefault(group_key, set()).add(inst['label'])
 
         all_groups = list(group_to_instances.keys())
         random.shuffle(all_groups) # Shuffle to break ties randomly
@@ -953,10 +940,8 @@ class Project:
         total_size = len(all_insts)
 
         for group in remaining_groups:
-            # Check if we have reached the target split size
             if current_test_size / total_size >= split:
                 break
-            # Add the group to the test set only if it's not already there
             if group not in test_groups:
                 test_groups.add(group)
                 current_test_size += len(group_to_instances.get(group, []))
@@ -984,7 +969,7 @@ class Project:
     def load_dataset(self, name: str, seed: int = 42, split: float = 0.2, seq_len: int = 15, progress_callback=None) -> tuple:
         random.seed(seed)
         train_insts, test_insts, behaviors = self._load_dataset_common(name, split)
-        if train_insts is None: return None, None, None, None # Return tuple of Nones
+        if train_insts is None: return None, None, None, None
         
         def train_prog(p): progress_callback(p*0.5) if progress_callback else None
         def test_prog(p): progress_callback(50 + p*0.5) if progress_callback else None
@@ -992,13 +977,12 @@ class Project:
         train_seqs, train_labels = self.convert_instances(train_insts, seq_len, behaviors, train_prog)
         test_seqs, test_labels = self.convert_instances(test_insts, seq_len, behaviors, test_prog)
         
-        # Return the PyTorch datasets AND the original instance lists
         return BalancedDataset(train_seqs, train_labels, behaviors), StandardDataset(test_seqs, test_labels), train_insts, test_insts
 
     def load_dataset_for_weighted_loss(self, name, seed=42, split=0.2, seq_len=15, progress_callback=None) -> tuple:
         random.seed(seed)
         train_insts, test_insts, behaviors = self._load_dataset_common(name, split)
-        if train_insts is None: return None, None, None, None, None # Return tuple of Nones
+        if train_insts is None: return None, None, None, None, None
 
         def train_prog(p): progress_callback(p*0.5) if progress_callback else None
         def test_prog(p): progress_callback(50 + p*0.5) if progress_callback else None
@@ -1011,7 +995,6 @@ class Project:
 
         test_seqs, test_labels = self.convert_instances(test_insts, seq_len, behaviors, test_prog)
 
-        # Return the PyTorch datasets, weights, AND the original instance lists
         return StandardDataset(train_seqs, train_labels), StandardDataset(test_seqs, test_labels), weights, train_insts, test_insts
 
 

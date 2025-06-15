@@ -37,29 +37,34 @@ import threading
 # HELPER FUNCTIONS
 # =================================================================
 
-def _video_import_worker(session_name: str, video_paths: list[str]):
+def _video_import_worker(session_name: str, subject_name: str, video_paths: list[str]):
     """
     (WORKER) Runs in a separate thread to handle slow file copy operations.
     """
     try:
-        workthreads.log_message(f"Starting import of {len(video_paths)} videos to session '{session_name}'.", "INFO")
+        workthreads.log_message(f"Starting import of {len(video_paths)} videos to session '{session_name}' for subject '{subject_name}'.", "INFO")
 
-        # This is the same logic that was in import_videos before
-        date_str = datetime.now().strftime("%Y%m%d")
-        date_dir = os.path.join(gui_state.proj.recordings_dir, date_str)
-        session_dir = os.path.join(date_dir, session_name)
+        # The session_name is the top-level folder.
+        session_dir = os.path.join(gui_state.proj.recordings_dir, session_name)
+
+        # The final destination is now a subfolder named with the user-provided subject_name
+        final_dest_dir = os.path.join(session_dir, subject_name)
         
-        if os.path.exists(session_dir):
-            raise FileExistsError(f"Session '{session_name}' already exists for today.")
-
-        os.makedirs(session_dir, exist_ok=True)
+        if os.path.exists(final_dest_dir) and os.listdir(final_dest_dir):
+            raise FileExistsError(f"A folder for subject '{subject_name}' already exists in this session and is not empty.")
+            
+        os.makedirs(final_dest_dir, exist_ok=True)
         
         newly_copied_files = []
         for video_path in video_paths:
-            dest_path = os.path.join(session_dir, os.path.basename(video_path))
-            shutil.copy(video_path, dest_path)
-            newly_copied_files.append(dest_path)
-        
+            try:
+                basename = os.path.basename(video_path)
+                dest_path = os.path.join(final_dest_dir, basename)
+                shutil.copy(video_path, dest_path)
+                newly_copied_files.append(dest_path)
+            except Exception as copy_error:
+                workthreads.log_message(f"Could not copy '{os.path.basename(video_path)}'. Skipping. Error: {copy_error}", "WARN")
+
         if newly_copied_files:
             with gui_state.encode_lock:
                 new_files_to_queue = [f for f in newly_copied_files if f not in gui_state.encode_tasks]
@@ -69,14 +74,13 @@ def _video_import_worker(session_name: str, video_paths: list[str]):
         gui_state.proj.reload_recordings()
 
         workthreads.log_message(f"Successfully imported {len(video_paths)} video(s).", "INFO")
-        # Call the JavaScript function to notify completion
-        eel.notify_import_complete(True, f"Successfully imported {len(video_paths)} video(s) to session '{session_name}'.")
+        eel.notify_import_complete(True, f"Successfully imported {len(video_paths)} video(s) to session '{session_name}' under subject '{subject_name}'.")
 
     except Exception as e:
         print(f"ERROR in video import worker: {e}")
         traceback.print_exc()
-        # Call JavaScript function to report the specific error
         eel.notify_import_complete(False, f"Import failed: {e}")
+
 
 def color_distance(rgb1, rgb2):
     """Calculates the perceived distance between two RGB colors for contrast checking."""
@@ -136,11 +140,16 @@ def get_record_tree() -> dict:
     if not gui_state.proj or not os.path.exists(gui_state.proj.recordings_dir):
         return {}
     tree = {}
-    for date_dir in os.scandir(gui_state.proj.recordings_dir):
-        if date_dir.is_dir():
-            tree[date_dir.name] = [
-                session.name for session in os.scandir(date_dir.path) if session.is_dir()
-            ]
+    try:
+        # The top-level directories inside 'recordings' are the session names.
+        for session_dir in os.scandir(gui_state.proj.recordings_dir):
+            if session_dir.is_dir():
+                # The value is a list of the subject/camera directories inside the session.
+                subjects = [subject.name for subject in os.scandir(session_dir.path) if subject.is_dir()]
+                if subjects:
+                    tree[session_dir.name] = subjects
+    except Exception as e:
+        print(f"Error building record tree: {e}")
     return tree
 
 
@@ -155,7 +164,6 @@ def get_videos_for_dataset(dataset_name: str) -> list[tuple[str, str]]:
     if not whitelist: return []
 
     video_list = []
-    # This logic can be simplified in the future, but works for now.
     if gui_state.proj.recordings_dir and os.path.exists(gui_state.proj.recordings_dir):
         for root, _, files in os.walk(gui_state.proj.recordings_dir):
             for file in files:
@@ -207,30 +215,46 @@ def get_inferred_videos_for_session(session_dir_rel: str, model_name: str) -> li
                 
     return sorted(ready_videos, key=lambda x: x[1])
 
+
 @eel.expose
-def import_videos(session_name: str, video_paths: list[str]) -> bool:
+def get_existing_session_names() -> list[str]:
+    """
+    Scans the project's recordings directory and returns a sorted list of all
+    top-level session folders.
+    """
+    if not gui_state.proj or not os.path.isdir(gui_state.proj.recordings_dir):
+        return []
+    
+    # The session names are the names of the directories
+    # immediately inside the main 'recordings' folder.
+    try:
+        session_names = [d.name for d in os.scandir(gui_state.proj.recordings_dir) if d.is_dir()]
+        return sorted(session_names)
+    except Exception as e:
+        print(f"Error scanning for session names: {e}")
+        return []
+
+
+@eel.expose
+def import_videos(session_name: str, subject_name: str, video_paths: list[str]) -> bool:
     """
     (LAUNCHER) Starts the video import process in a background thread.
     Returns immediately to keep the UI responsive.
     """
-    if not gui_state.proj or not session_name or not video_paths:
+    if not gui_state.proj or not session_name or not subject_name or not video_paths:
         return False
     
     print(f"Spawning background thread to import {len(video_paths)} video(s)...")
     
-    # Create a new thread targeting our worker function
     import_thread = threading.Thread(
         target=_video_import_worker,
-        args=(session_name, video_paths)
+        args=(session_name, subject_name, video_paths)
     )
     
-    # Set as a daemon thread so it automatically closes if the main app exits
     import_thread.daemon = True
-    
-    # Start the thread
     import_thread.start()
     
-    return True # Return immediately
+    return True
 
 # =================================================================
 # EEL-EXPOSED FUNCTIONS: LABELING WORKFLOW & ACTIONS
@@ -241,7 +265,6 @@ def get_model_configs() -> dict:
     """Loads configurations for all available models."""
     if not gui_state.proj:
         return {}
-    # Correctly gets the config from each cbas.Model object
     return {name: model.config for name, model in gui_state.proj.models.items()}
 
 def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_instances: list = None, probability_df: pd.DataFrame = None):
@@ -250,14 +273,12 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
     all state setup and then calls back to the JavaScript UI when ready.
     """
     try:
-        # 1. Validate State and Arguments
         print("Labeling worker started.")
         if gui_state.proj is None: raise ValueError("Project is not loaded.")
         if name not in gui_state.proj.datasets: raise ValueError(f"Dataset '{name}' not found.")
         if not video_to_open or not os.path.exists(video_to_open):
             raise FileNotFoundError(f"Video to label does not exist: {video_to_open}")
 
-        # 2. Reset Global Labeling State
         print("Resetting labeling state for new session.")
         if gui_state.label_capture and gui_state.label_capture.isOpened():
             gui_state.label_capture.release()
@@ -268,18 +289,15 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
         gui_state.label_history, gui_state.label_behavior_colors = [], []
         gui_state.label_session_buffer, gui_state.selected_instance_index = [], -1
         gui_state.label_probability_df = probability_df
-        # Ensure confirmation mode is always turned off when starting a new session.
         gui_state.label_confirmation_mode = False
         gui_state.label_confidence_threshold = 100
         
         eel.setConfirmationModeUI(False)()
         
-        # 3. Set Up Dataset and Colormap
         dataset: cbas.Dataset = gui_state.proj.datasets[name]
         gui_state.label_dataset = dataset
         gui_state.label_col_map = Colormap("seaborn:tab20")
 
-        # 4. Prepare the In-Memory Session Buffer
         print("Loading session buffer...")
         gui_state.label_videos = [video_to_open]
         current_video_path = gui_state.label_videos[0]
@@ -296,10 +314,8 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
             labeling_mode = 'review'
             model_name_for_ui = name
 
-            # Store the complete, unfiltered list of predictions
             gui_state.label_unfiltered_instances = preloaded_instances.copy()
             
-            # Apply the initial (default) filter
             initial_threshold = gui_state.label_confidence_threshold / 100.0
             filtered_instances = [
                 p for p in preloaded_instances if p.get('confidence', 1.0) < initial_threshold
@@ -311,18 +327,15 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
                 if not is_overlapping:
                     gui_state.label_session_buffer.append(pred_inst)
         
-        # 5. Generate and Store Corrected Colors
         dataset_behaviors = gui_state.label_dataset.labels.get("behaviors", [])
         behavior_colors = [str(gui_state.label_col_map(tab20_map(i))) for i in range(len(dataset_behaviors))]
         gui_state.label_behavior_colors = behavior_colors
 
-        # 6. Call Frontend to Build the UI
         print("Setup complete. Calling frontend to build UI.")
         eel.buildLabelingUI(dataset_behaviors, behavior_colors)()
         eel.setLabelingModeUI(labeling_mode, model_name_for_ui)()
         eel.setConfirmationModeUI(False)()
 
-        # 7. Load Video and Push Initial Frame
         if not gui_state.label_videos: raise ValueError("Video list is empty after setup.")
         print("Loading video and pushing initial frame...")
         next_video(0)
@@ -337,7 +350,6 @@ def _start_labeling_worker(name: str, video_to_open: str = None, preloaded_insta
 def start_labeling(name: str, video_to_open: str = None, preloaded_instances: list = None) -> bool:
     """
     (LAUNCHER) Lightweight function to spawn the labeling worker in the background.
-    Returns True immediately to unblock the JavaScript UI.
     """
     try:
         eel.spawn(_start_labeling_worker, name, video_to_open, preloaded_instances, None)
@@ -352,7 +364,6 @@ def start_labeling(name: str, video_to_open: str = None, preloaded_instances: li
 def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_to_label: str) -> bool:
     """
     Runs a quick inference step and then spawns the labeling worker.
-    Now includes a behavior compatibility check.
     """
     try:
         print(f"Request to pre-label '{os.path.basename(video_path_to_label)}' with model '{model_name}'...")
@@ -362,9 +373,6 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
         model_obj = gui_state.proj.models.get(model_name)
         if not dataset or not model_obj: raise ValueError("Dataset or Model not found.")
 
-        # =================================================================
-        # BEHAVIOR COMPATIBILITY CHECK
-        # =================================================================
         target_behaviors = set(dataset.config.get("behaviors", []))
         model_behaviors = set(model_obj.config.get("behaviors", []))
 
@@ -374,9 +382,8 @@ def start_labeling_with_preload(dataset_name: str, model_name: str, video_path_t
                 "Pre-labeling cannot proceed."
             )
             print(f"ERROR: {error_message}")
-            eel.showErrorOnLabelTrainPage(error_message)() # Send clear error to UI
-            return False # Important: return False to signal failure
-        # =================================================================
+            eel.showErrorOnLabelTrainPage(error_message)()
+            return False
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         torch_model = classifier_head.classifier(
@@ -419,10 +426,8 @@ def save_session_labels():
 
     final_labels_to_save = []
     for inst in gui_state.label_session_buffer:
-        # Save an instance if it's human-added OR if it's been confirmed with Enter.
         if 'confidence' not in inst or inst.get('_confirmed', False):
             final_inst = inst.copy()
-            # Clean up all temporary keys before saving
             for key in ['confidence', 'confidences', '_original_start', '_original_end', '_confirmed']:
                 final_inst.pop(key, None)
             final_labels_to_save.append(final_inst)
@@ -430,13 +435,11 @@ def save_session_labels():
     current_video_path = gui_state.label_videos[0]
     all_labels = gui_state.label_dataset.labels["labels"]
 
-    # Remove all old labels for the current video
     for behavior_name in all_labels:
         all_labels[behavior_name][:] = [
             inst for inst in all_labels[behavior_name] if inst.get("video") != current_video_path
         ]
     
-    # Add the new, verified-only labels back
     for corrected_inst in final_labels_to_save:
         all_labels.setdefault(corrected_inst['label'], []).append(corrected_inst)
     
@@ -445,12 +448,10 @@ def save_session_labels():
     
     print(f"Saved {len(final_labels_to_save)} human-verified/corrected labels for video {os.path.basename(current_video_path)}.")
     
-    # Reset the confirmation mode after saving
     gui_state.label_confirmation_mode = False
-    # Tell the UI to reset the buttons
     eel.setConfirmationModeUI(False)()
-    # Trigger a final re-render to show the clean state
     render_image()
+
 
 @eel.expose
 def refilter_instances(new_threshold: int):
@@ -460,22 +461,16 @@ def refilter_instances(new_threshold: int):
     print(f"Refiltering instances with threshold < {new_threshold}%")
     gui_state.label_confidence_threshold = new_threshold
     
-    # Always start from the complete, unfiltered list
     unfiltered = gui_state.label_unfiltered_instances
-    
-    # Get existing human labels so we don't discard them
     human_labels = [inst for inst in gui_state.label_session_buffer if 'confidence' not in inst]
     
-    # Apply the new filter
     threshold_float = new_threshold / 100.0
     newly_filtered = [
         p for p in unfiltered if p.get('confidence', 1.0) < threshold_float
     ]
     
-    # Combine human labels with the newly filtered predictions
     gui_state.label_session_buffer = human_labels + newly_filtered
     
-    # Reset navigation state and re-render
     gui_state.selected_instance_index = -1
     eel.highlightBehaviorRow(None)()
     eel.updateConfidenceBadge(None, None)()
@@ -495,47 +490,35 @@ def jump_to_frame(frame_number: int):
     try:
         frame_num = int(frame_number)
         total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-        
-        # Clamp the value to be within the valid frame range
         safe_frame_num = max(0, min(frame_num, int(total_frames) - 1))
-        
         gui_state.label_index = safe_frame_num
         render_image()
     except (ValueError, TypeError):
         print(f"Invalid frame number received: {frame_number}")
 
+
 @eel.expose
 def confirm_selected_instance():
     """
     Toggles the 'confirmed' state of the currently selected instance.
-    If un-confirming, it also reverts any boundary edits to their original state.
     """
     if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
         instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
-        
-        # Check the current state of the instance
         is_currently_confirmed = instance.get('_confirmed', False)
 
         if is_currently_confirmed:
-            # --- UNLOCK LOGIC ---
-            # It's already confirmed, so un-confirm it and revert changes.
             instance['_confirmed'] = False
-            
-            # Revert to original boundaries if they exist
             if '_original_start' in instance:
                 instance['start'] = instance['_original_start']
                 instance['end'] = instance['_original_end']
-            
             print(f"Unlocked instance {gui_state.selected_instance_index} and reverted changes.")
         
         else:
-            # --- LOCK/CONFIRM LOGIC ---
-            # It's not confirmed, so confirm it.
             instance['_confirmed'] = True
             print(f"Confirmed instance {gui_state.selected_instance_index}.")
             
-        # Re-render to show the change in visual state (border color, boundaries)
         render_image()
+
 
 @eel.expose
 def handle_click_on_label_image(x: int, y: int):
@@ -576,7 +559,6 @@ def next_video(shift: int):
 def next_frame(shift: int):
     """
     Moves the playhead forward or backward by a number of frames.
-    Movement is always free.
     """
     if not (gui_state.label_capture and gui_state.label_capture.isOpened()):
         return
@@ -592,26 +574,20 @@ def next_frame(shift: int):
 
 @eel.expose
 def jump_to_instance(direction: int):
-    """Finds the next/previous instance and jumps the playhead. Clears any active draft."""
+    """Finds the next/previous instance and jumps the playhead."""
     if not gui_state.label_session_buffer:
-        eel.highlightBehaviorRow(None)()
-        eel.updateConfidenceBadge(None, None)() # Clear badge if no instances
-        return
+        eel.highlightBehaviorRow(None)(); eel.updateConfidenceBadge(None, None)(); return
 
-    # Find instance under current playhead to deselect it
     for i, inst in enumerate(gui_state.label_session_buffer):
         if inst.get("start", -1) <= gui_state.label_index <= inst.get("end", -1):
             gui_state.selected_instance_index = i
             break
-    else: # if no instance is under the playhead, reset selection
+    else:
         gui_state.selected_instance_index = -1
         
-
     sorted_instances = sorted(enumerate(gui_state.label_session_buffer), key=lambda item: item[1]['start'])
     if not sorted_instances:
-        eel.highlightBehaviorRow(None)()
-        eel.updateConfidenceBadge(None, None)()
-        return
+        eel.highlightBehaviorRow(None)(); eel.updateConfidenceBadge(None, None)(); return
 
     current_frame = gui_state.label_index
     target_item = None
@@ -626,24 +602,19 @@ def jump_to_instance(direction: int):
     if target_item:
         original_index, instance_data = target_item
         gui_state.label_index = instance_data['start']
-        # Find the index in the original, unsorted buffer
         gui_state.selected_instance_index = gui_state.label_session_buffer.index(instance_data)
-
         confidence = instance_data.get('confidence')
         eel.updateConfidenceBadge(instance_data['label'], confidence)()
-
         eel.highlightBehaviorRow(instance_data['label'])()
         render_image()
     else:
-        eel.highlightBehaviorRow(None)()
-        eel.updateConfidenceBadge(None, None)()
+        eel.highlightBehaviorRow(None)(); eel.updateConfidenceBadge(None, None)()
 
 
 @eel.expose
 def update_instance_boundary(boundary_type: str):
     """
     Directly updates the start or end frame of the currently selected instance.
-    This version is now collision-aware and will trim or delete adjacent instances.
     """
     if gui_state.selected_instance_index == -1 or gui_state.selected_instance_index >= len(gui_state.label_session_buffer):
         return
@@ -651,60 +622,37 @@ def update_instance_boundary(boundary_type: str):
     active_instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
     new_boundary_frame = gui_state.label_index
 
-    # On first edit of a pre-labeled instance, store original boundaries.
     if 'confidence' in active_instance and '_original_start' not in active_instance:
         active_instance['_original_start'] = active_instance['start']
         active_instance['_original_end'] = active_instance['end']
-        active_instance['_confirmed'] = False # Mark as edited
+        active_instance['_confirmed'] = False
 
-    # Define the proposed new start and end for the active instance
     if boundary_type == 'start':
-        if new_boundary_frame >= active_instance['end']: return # Invalid move
+        if new_boundary_frame >= active_instance['end']: return
         new_start, new_end = new_boundary_frame, active_instance['end']
     elif boundary_type == 'end':
-        if new_boundary_frame <= active_instance['start']: return # Invalid move
+        if new_boundary_frame <= active_instance['start']: return
         new_start, new_end = active_instance['start'], new_boundary_frame
-    else:
-        return
+    else: return
 
-    # --- COLLISION DETECTION & RESOLUTION ---
     indices_to_pop = []
     for i, neighbor in enumerate(gui_state.label_session_buffer):
-        if i == gui_state.selected_instance_index:
-            continue # Don't check against self
-
-        # Check for overlap between the proposed new region and the neighbor
+        if i == gui_state.selected_instance_index: continue
         if max(new_start, neighbor['start']) <= min(new_end, neighbor['end']):
-            # Collision detected! Now, trim or delete the neighbor.
-            
-            # Case 1: Active instance is expanding left, trimming neighbor's end
-            if boundary_type == 'start' and new_start <= neighbor['end']:
-                neighbor['end'] = new_start - 1
+            if boundary_type == 'start' and new_start <= neighbor['end']: neighbor['end'] = new_start - 1
+            elif boundary_type == 'end' and new_end >= neighbor['start']: neighbor['start'] = new_end + 1
+            if neighbor['start'] >= neighbor['end']: indices_to_pop.append(i)
 
-            # Case 2: Active instance is expanding right, trimming neighbor's start
-            elif boundary_type == 'end' and new_end >= neighbor['start']:
-                neighbor['start'] = new_end + 1
-            
-            # If trimming results in an invalid (e.g., end < start) instance, queue it for deletion.
-            if neighbor['start'] >= neighbor['end']:
-                indices_to_pop.append(i)
-
-    # Remove invalid instances in reverse order to not mess up indices
     if indices_to_pop:
         for i in sorted(indices_to_pop, reverse=True):
-            # Adjust selected index if we delete an instance before the active one
-            if i < gui_state.selected_instance_index:
-                gui_state.selected_instance_index -= 1
+            if i < gui_state.selected_instance_index: gui_state.selected_instance_index -= 1
             gui_state.label_session_buffer.pop(i)
 
-    # After resolving all collisions, apply the change to the active instance.
     active_instance_idx = gui_state.selected_instance_index
     if active_instance_idx < len(gui_state.label_session_buffer):
         active_instance = gui_state.label_session_buffer[active_instance_idx]
-        if boundary_type == 'start':
-            active_instance['start'] = new_boundary_frame
-        elif boundary_type == 'end':
-            active_instance['end'] = new_boundary_frame
+        if boundary_type == 'start': active_instance['start'] = new_boundary_frame
+        elif boundary_type == 'end': active_instance['end'] = new_boundary_frame
     
     render_image()
 
@@ -716,7 +664,6 @@ def get_zoom_range_for_click(x_pos: int) -> int:
         instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
         total_frames = gui_state.label_capture.get(cv2.CAP_PROP_FRAME_COUNT)
 
-        # Use original boundaries for context if they exist, otherwise current ones.
         original_start = instance.get('_original_start', instance['start'])
         original_end = instance.get('_original_end', instance['end'])
         
@@ -726,7 +673,6 @@ def get_zoom_range_for_click(x_pos: int) -> int:
         zoom_end = min(total_frames, original_end + context)
         
         if zoom_end > zoom_start:
-            # Calculate what frame corresponds to the click position (x_pos out of 500)
             new_frame = int(zoom_start + (x_pos / 500.0) * (zoom_end - zoom_start))
             gui_state.label_index = new_frame
             render_image()
@@ -736,22 +682,16 @@ def add_instance_to_buffer():
     """Helper function to create a new label instance and add it to the session buffer."""
     if gui_state.label_type == -1 or gui_state.label_start == -1: return
 
-    start_idx = min(gui_state.label_start, gui_state.label_index)
-    end_idx = max(gui_state.label_start, gui_state.label_index)
-    if start_idx == end_idx: return # Avoid zero-length labels
+    start_idx, end_idx = min(gui_state.label_start, gui_state.label_index), max(gui_state.label_start, gui_state.label_index)
+    if start_idx == end_idx: return
 
-    # Collision check with existing labels in the buffer
     for inst in gui_state.label_session_buffer:
         if max(start_idx, inst['start']) <= min(end_idx, inst['end']):
-            print(f"Collision detected. New label ({start_idx}-{end_idx}) overlaps with existing.")
             eel.showErrorOnLabelTrainPage("Overlapping behavior region! Behavior not recorded.")
             return
 
     behavior_name = gui_state.label_dataset.labels["behaviors"][gui_state.label_type]
-    new_instance = {
-        "video": gui_state.label_videos[gui_state.label_vid_index],
-        "start": start_idx, "end": end_idx, "label": behavior_name,
-    }
+    new_instance = { "video": gui_state.label_videos[gui_state.label_vid_index], "start": start_idx, "end": end_idx, "label": behavior_name }
     gui_state.label_session_buffer.append(new_instance)
     gui_state.label_history.append(new_instance)
     update_counts()
@@ -764,7 +704,6 @@ def label_frame(value: int):
     behaviors = gui_state.label_dataset.labels.get("behaviors", [])
     if not 0 <= value < len(behaviors): return
 
-    # Check if we're clicking on an existing label to change it
     clicked_instance_index = -1
     for i, inst in enumerate(gui_state.label_session_buffer):
         if inst.get("start", -1) <= gui_state.label_index <= inst.get("end", -1):
@@ -772,20 +711,18 @@ def label_frame(value: int):
             break
             
     if clicked_instance_index != -1 and gui_state.label_type == -1:
-        # Change the type of an existing label in the buffer
         new_behavior_name = behaviors[value]
         gui_state.label_session_buffer[clicked_instance_index]['label'] = new_behavior_name
         print(f"Changed instance {clicked_instance_index} to '{new_behavior_name}'.")
     else:
-        # Standard start/end labeling logic
-        if value == gui_state.label_type: # End current labeling
+        if value == gui_state.label_type:
             add_instance_to_buffer()
             gui_state.label_type = -1; gui_state.label_start = -1
-        elif gui_state.label_type == -1: # Start new labeling
+        elif gui_state.label_type == -1:
             gui_state.label_type, gui_state.label_start = value, gui_state.label_index
             gui_state.selected_instance_index = -1
             eel.updateConfidenceBadge(None, None)()
-        else: # Switch active label type
+        else:
             gui_state.label_type, gui_state.label_start = value, gui_state.label_index
             eel.updateConfidenceBadge(None, None)()
             
@@ -869,17 +806,13 @@ def reveal_dataset_files(dataset_name: str):
 
     try:
         if sys.platform == "win32":
-            # For Windows, os.startfile is the most direct way
             os.startfile(dataset_path)
         elif sys.platform == "darwin":
-            # For macOS
             subprocess.run(["open", dataset_path])
         else:
-            # For Linux and other UNIX-like systems
             subprocess.run(["xdg-open", dataset_path])
     except Exception as e:
         print(f"Failed to open file explorer for path '{dataset_path}': {e}")
-        # Optionally, send an error back to the UI
         eel.showErrorOnLabelTrainPage(f"Could not open the folder. Please navigate there manually:\n{dataset_path}")()
 
 @eel.expose
@@ -964,16 +897,13 @@ def render_image():
 
     main_frame_blob, timeline_blob, zoom_blob = None, None, None
 
-    # 1. Generate Main Video Frame Blob
     frame_resized = cv2.resize(frame, (500, 500))
     _, encoded_main_frame = cv2.imencode(".jpg", frame_resized)
     main_frame_blob = base64.b64encode(encoded_main_frame.tobytes()).decode("utf-8")
 
-    # 2. Generate a clean data-only canvas for both timelines
     base_timeline_canvas = np.full((50, 500, 3), 100, dtype=np.uint8)
     fill_colors(base_timeline_canvas, total_frames)
 
-    # 3. Create the Full Timeline by copying the base and adding the highlight
     full_timeline_with_highlight = base_timeline_canvas.copy()
     if gui_state.selected_instance_index != -1 and gui_state.selected_instance_index < len(gui_state.label_session_buffer):
         instance = gui_state.label_session_buffer[gui_state.selected_instance_index]
@@ -982,7 +912,6 @@ def render_image():
         if start_px >= end_px: end_px = start_px + 1
         cv2.rectangle(full_timeline_with_highlight, (start_px, 0), (end_px, 49), (255, 255, 255), 2)
 
-    # 4. Create the Zoom Timeline by cropping the base and adding the bracket
     zoom_width_frames = total_frames * 0.10
     zoom_start_frame = max(0, current_frame_idx - zoom_width_frames / 2)
     zoom_end_frame = min(total_frames, current_frame_idx + zoom_width_frames / 2)
@@ -1009,12 +938,10 @@ def render_image():
                 if bracket_start_x >= 0 and bracket_start_x < 500: cv2.line(zoom_canvas, (bracket_start_x, y_pos), (bracket_start_x, y_pos - tick_height), color, thickness)
                 if bracket_end_x > 0 and bracket_end_x < 500: cv2.line(zoom_canvas, (bracket_end_x, y_pos), (bracket_end_x, y_pos - tick_height), color, thickness)
 
-    # 5. Draw playhead markers
     marker_color = (0, 0, 0)
     cv2.line(zoom_canvas, (249, 0), (249, 50), marker_color, 2)
     cv2.line(full_timeline_with_highlight, (int(500 * current_frame_idx / total_frames), 0), (int(500 * current_frame_idx / total_frames), 50), marker_color, 2)
     
-    # 6. Encode all images and send to frontend
     _, encoded_timeline = cv2.imencode(".jpg", full_timeline_with_highlight)
     timeline_blob = base64.b64encode(encoded_timeline.tobytes()).decode("utf-8")
     
@@ -1026,7 +953,7 @@ def render_image():
 
 def fill_colors(canvas_img: np.ndarray, total_frames: int):
     """
-    Draws colored bars on a timeline canvas. Does NOT draw any selection indicators.
+    Draws colored bars on a timeline canvas.
     """
     if not all([gui_state.label_dataset, gui_state.label_videos, gui_state.label_capture, gui_state.label_capture.isOpened()]):
         return canvas_img

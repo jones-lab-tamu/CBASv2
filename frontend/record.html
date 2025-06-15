@@ -58,7 +58,16 @@
     </div>
   </nav>
 
-  <div class="container align-items-center justify-content-center">
+  <div class="container mt-n5" style="position: relative; z-index: 10;">
+    <div class="card bg-dark text-light shadow-sm">
+        <div class="card-body d-flex align-items-center">
+            <label for="session-name-input" class="form-label mb-0 me-3 fw-bold fs-5 text-nowrap">Current Session Name:</label>
+            <input type="text" class="form-control" id="session-name-input" placeholder="Enter a name for this recording session...">
+        </div>
+    </div>
+  </div>
+
+  <div class="container align-items-center justify-content-center mt-4">
     <div class="row" id="camera-container"></div>
   </div>
 
@@ -222,9 +231,9 @@
   <div class="log-panel-footer">
     <!-- This is the button that toggles the panel -->
     <div class="d-flex justify-content-end p-2 bg-dark">
-      <!-- MODIFIED: Added tooltip attributes -->
+      <!-- Added tooltip attributes -->
       <button class="btn btn-sm btn-outline-secondary me-2" id="clear-log-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Clear all messages from the log">Clear Log</button>
-      <!-- MODIFIED: Added tooltip attributes -->
+      <!-- Added tooltip attributes -->
       <button class="btn btn-sm btn-info" type="button" data-bs-toggle="collapse" data-bs-target="#log-panel-collapse" aria-expanded="false" aria-controls="log-panel-collapse" data-bs-toggle="tooltip" data-bs-placement="top" title="Show/Hide the log panel">
         <i class="bi bi-terminal"></i> View Log
       </button>

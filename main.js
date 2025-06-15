@@ -93,8 +93,24 @@ if (!gotTheLock) {
 	});
     
     // IPC for file dialogs
-    ipcMain.on('open-file-dialog', (event) => {
-      dialog.showOpenDialog(appWindow, { properties: ['openDirectory'] })
+    ipcMain.on('open-file-dialog', (event, options) => {
+      let startPath;
+      if (options?.defaultPath) {
+        // If a path is provided, we want to open its PARENT directory.
+        // This is more user-friendly. e.g., if project is in C:\Users\Me\Projects,
+        // we open C:\Users\Me\ so they can see all their projects.
+        startPath = path.dirname(options.defaultPath);
+      } else {
+        // Fallback to the user's documents folder if no path is known.
+        startPath = app.getPath('documents');
+      }
+
+      const dialogOptions = { 
+        properties: ['openDirectory'],
+        defaultPath: startPath // Use our calculated start path
+      };
+
+      dialog.showOpenDialog(appWindow, dialogOptions)
         .then(result => {
           if (!result.canceled) event.sender.send('selected-directory', result.filePaths[0]);
         });

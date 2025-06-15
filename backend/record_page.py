@@ -195,13 +195,6 @@ def create_camera(camera_name: str, rtsp_url: str) -> bool:
 # =================================================================
 
 @eel.expose
-def create_recording_dir(camera_name: str) -> str | bool:
-    """Creates a new recording session directory for a camera."""
-    if not gui_state.proj or camera_name not in gui_state.proj.cameras: return False
-    return gui_state.proj.cameras[camera_name].create_recording_dir()
-
-
-@eel.expose
 def get_cbas_status() -> dict:
     """Returns current status of streams and encoding tasks for the UI."""
     streams = list(gui_state.proj.active_recordings.keys()) if gui_state.proj else []
@@ -211,10 +204,12 @@ def get_cbas_status() -> dict:
 
 
 @eel.expose
-def start_camera_stream(camera_name: str, dest_dir: str, segment_time: int) -> bool:
-    """Starts recording for a specific camera."""
+def start_camera_stream(camera_name: str, session_name: str, segment_time: int) -> bool:
+    """Starts recording for a specific camera into a structured path."""
     if not gui_state.proj or camera_name not in gui_state.proj.cameras: return False
-    return gui_state.proj.cameras[camera_name].start_recording(dest_dir, segment_time)
+    
+    camera_obj = gui_state.proj.cameras[camera_name]
+    return camera_obj.start_recording(session_name, segment_time)
 
 
 @eel.expose
